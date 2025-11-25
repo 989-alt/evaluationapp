@@ -85,14 +85,16 @@
             // 모델 관련 State
             const [model, setModel] = useState('gemini-1.5-flash'); 
             const [modelList, setModelList] = useState([
-                { name: 'models/gemini-1.5-flash', displayName: 'gemini-1.5-flash (기본)' },
-                { name: 'models/gemini-1.5-flash-002', displayName: 'gemini-1.5-flash-002 (최신)' },
+                { name: 'models/gemini-2.5-flash', displayName: 'gemini-2.5-flash (최신/빠름)' },
+                { name: 'models/gemini-2.5-pro', displayName: 'gemini-2.5-pro (최신/고성능)' },
+                { name: 'models/gemini-1.5-flash', displayName: 'gemini-1.5-flash (안정/기본)' },
                 { name: 'models/gemini-1.5-pro', displayName: 'gemini-1.5-pro (고성능)' },
-                { name: 'models/gemini-pro', displayName: 'gemini-pro (구버전)' }
+                { name: 'models/gemini-1.5-flash-8b', displayName: 'gemini-1.5-flash-8b (초경량)' }
             ]);
             const [isFetchingModels, setIsFetchingModels] = useState(false);
 
             const [loading, setLoading] = useState(false);
+            const [progressMsg, setProgressMsg] = useState(''); // 진행 상황 메시지
             const [error, setError] = useState('');
 
             // --- Comment Gen State (평어) ---
@@ -104,7 +106,7 @@
             // --- Behavior Gen State (행발) ---
             const [studentCount, setStudentCount] = useState(1);
             const [students, setStudents] = useState([{ id: 1, name: '', checks: new Map() }]);
-            const [targetBytes, setTargetBytes] = useState(500); 
+            const [targetBytes, setTargetBytes] = useState(700); 
             const [behaviorResults, setBehaviorResults] = useState(null);
 
             // --- Creative Gen State (창체) ---
@@ -235,15 +237,20 @@
                         }));
 
                         validModels.sort((a, b) => {
-                            if (a.name.includes('1.5') && !b.name.includes('1.5')) return -1;
-                            if (!a.name.includes('1.5') && b.name.includes('1.5')) return 1;
-                            return 0;
+                            const getVersion = (name) => {
+                                const match = name.match(/(\d+\.\d+)/);
+                                return match ? parseFloat(match[0]) : 0;
+                            };
+                            const verA = getVersion(a.name);
+                            const verB = getVersion(b.name);
+                            if (verA !== verB) return verB - verA;
+                            return b.name.localeCompare(a.name); 
                         });
 
                         setModelList(validModels);
                         if (validModels.length > 0) {
                             setModel(validModels[0].name.replace('models/', '')); 
-                            alert(`총 ${validModels.length}개의 사용 가능한 모델을 불러왔습니다.`);
+                            alert(`총 ${validModels.length}개의 사용 가능한 모델을 불러왔습니다.\n최신 모델(${validModels[0].displayName})이 상단에 정렬되었습니다.`);
                         }
                     }
                 } catch (err) {
@@ -271,7 +278,7 @@
                             { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
                         ],
                         generationConfig: {
-                            temperature: 0.9,
+                            temperature: 0.8, // 약간 낮춰서 지시 이행력 강화
                             maxOutputTokens: 8192,
                             responseMimeType: "application/json"
                         }
@@ -286,26 +293,25 @@
                 const data = await response.json();
                 
                 if (!data.candidates || data.candidates.length === 0) {
-                    throw new Error('AI 응답 데이터가 없습니다. (Candidates missing)');
+                    throw new Error('AI 응답 데이터가 없습니다.');
                 }
 
                 const candidate = data.candidates[0];
-                
                 if (candidate.finishReason === 'SAFETY') {
-                    throw new Error('생성된 내용이 안전 정책에 의해 차단되었습니다.\n(Safety Filter Blocked)');
+                    throw new Error('생성된 내용이 안전 정책에 의해 차단되었습니다.');
                 }
 
                 const rawText = candidate.content?.parts?.[0]?.text;
                 if (!rawText) {
-                    throw new Error(`AI 응답이 비어있습니다. (FinishReason: ${candidate.finishReason || 'Unknown'})`);
+                    throw new Error(`AI 응답이 비어있습니다. (FinishReason: ${candidate.finishReason})`);
                 }
 
                 try {
                     const cleanedText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
                     return JSON.parse(cleanedText);
                 } catch (e) {
-                    console.error("JSON Parsing Failed. Raw text:", rawText);
-                    throw new Error(`AI 응답을 처리할 수 없습니다.\n원인: JSON 형식이 아님.\n(받은 데이터: ${rawText.slice(0, 50)}...)`);
+                    console.error("JSON Parsing Failed", rawText);
+                    throw new Error(`AI 응답을 처리할 수 없습니다. JSON 형식이 아닙니다.`);
                 }
             };
 
@@ -317,6 +323,7 @@
                     return;
                 }
                 setLoading(true);
+                setProgressMsg('평어를 생성하고 있습니다...');
                 setError('');
                 setCommentResults(null);
 
@@ -328,7 +335,7 @@
                         [입력된 성취 기준 목록]
                         ${JSON.stringify(validStandards)}
 
-                        [생성 규칙 - **엄격 준수**]
+                        [생성 규칙]
                         1. 입력된 **각각의 성취 기준마다** 아래 개수만큼 문장을 생성해야 합니다.
                         2. **각 성취 기준 당** 생성 개수:
                            - "매우 잘함": ${counts.veryGood}개
@@ -336,24 +343,17 @@
                            - "보통": ${counts.average}개
                            - "노력요함": ${counts.needsEffort}개
                         
-                        [필수 제약 조건 - **맞춤법 검사 필수**]
-                        1. **어미**: 반드시 명사형(예: -함., -임., -것.)으로 끝내세요. 서술형(~합니다) 금지.
-                        2. **특수문자**: 따옴표, 괄호 등 특수문자 절대 사용 금지. 문자와 마침표만 사용.
-                        3. **맞춤법**: "강한 맞춤법 규칙"을 적용하여 띄어쓰기와 오탈자를 완벽하게 교정하세요.
-                        4. **다양성**: 동일 단어 반복 회피, 문장 구조 다양화.
+                        [필수 제약 조건]
+                        1. **어미**: 반드시 명사형(예: -함., -임., -것.)으로 끝내세요.
+                        2. **특수문자**: 따옴표, 괄호 등 특수문자 절대 사용 금지.
+                        3. **맞춤법**: "강한 맞춤법 규칙"을 적용.
                         
                         [출력 형식: JSON Array]
                         [ 
                           { 
-                            "standard": "첫 번째 성취기준 내용", 
-                            "levels": { 
-                              "veryGood": ["..."], 
-                              "good": ["..."], 
-                              "average": ["..."], 
-                              "needsEffort": ["..."] 
-                            } 
-                          },
-                          ...
+                            "standard": "성취기준 내용", 
+                            "levels": { "veryGood": ["..."], "good": ["..."], "average": ["..."], "needsEffort": ["..."] } 
+                          }, ...
                         ]
                     `;
                     const result = await callGemini(prompt);
@@ -363,12 +363,18 @@
                     setError(err.message);
                 } finally {
                     setLoading(false);
+                    setProgressMsg('');
                 }
             };
 
-            // 2. 행발 생성 함수
+            // 2. 행발 생성 함수 (Batch Processing 적용)
             const generateBehavior = async () => {
-                const studentData = students.map(s => {
+                setLoading(true);
+                setError('');
+                setBehaviorResults([]); // 초기화
+
+                // 데이터 준비
+                const allStudents = students.map(s => {
                     const traits = [];
                     s.checks.forEach((status, name) => {
                         traits.push({ 
@@ -383,48 +389,63 @@
                     };
                 });
 
-                setLoading(true);
-                setError('');
-                setBehaviorResults(null);
+                // 목표 글자 수 계산 (한글 3바이트 기준)
+                // targetBytes가 700이면 -> 약 233자.
+                const minChars = Math.floor((targetBytes - 50) / 3);
+                const maxChars = Math.floor((targetBytes + 100) / 3);
+
+                // BATCH SIZE 설정 (5명씩 끊어서 요청)
+                const BATCH_SIZE = 5;
+                const totalBatches = Math.ceil(allStudents.length / BATCH_SIZE);
+                let accumulatedResults = [];
 
                 try {
-                    // 한글 3바이트, 공백/숫자 1바이트를 고려한 대략적인 글자 수 목표 계산
-                    // 목표 바이트를 3으로 나누어 '한글 기준 글자 수' 범위를 설정해 줌
-                    const minChars = Math.floor((targetBytes - 100) / 3);
-                    const maxChars = Math.floor((targetBytes + 100) / 3);
+                    for (let i = 0; i < totalBatches; i++) {
+                        const start = i * BATCH_SIZE;
+                        const end = start + BATCH_SIZE;
+                        const batch = allStudents.slice(start, end);
 
-                    const prompt = `
-                        당신은 담임 교사로서 학생의 "행동특성 및 종합의견(행발)"을 작성해야 합니다.
-                        아래 학생별 특성 데이터를 바탕으로 줄글을 작성해주세요.
+                        setProgressMsg(`전체 ${allStudents.length}명 중 ${start + 1}~${Math.min(end, allStudents.length)}명 생성 중... (${i+1}/${totalBatches})`);
 
-                        [학생 데이터]
-                        ${JSON.stringify(studentData)}
+                        const prompt = `
+                            당신은 담임 교사로서 학생의 "행동특성 및 종합의견(행발)"을 작성해야 합니다.
+                            아래 학생별 특성 데이터를 바탕으로 줄글을 작성해주세요.
 
-                        [작성 규칙 - **분량 준수 최우선**]
-                        1. **목표 분량**: ${targetBytes} Bytes (한글 1자당 3Byte 계산)
-                        2. **글자 수 가이드**: 생성되는 텍스트는 **반드시 한글 기준 약 ${minChars}자 이상, ${maxChars}자 이하**여야 합니다.
-                           - 바이트 수 오차를 ±100 Bytes 이내로 맞추기 위해 위 글자 수 범위를 엄격하게 지키세요.
-                           - 글이 너무 길어지면 내용을 요약하고, 너무 짧으면 수식어를 추가하여 길이를 맞추세요.
-                        3. **주어 생략**: "학생1은", "OOO는"과 같은 주어를 절대 사용하지 마세요.
-                        4. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
-                        5. **특성 반영 로직**:
-                           - 상태가 **'긍정(우수)'**인 항목: 해당 특성이 우수하다는 칭찬 문구 작성.
-                           - 상태가 **'지도필요(부족함/개선필요)'**인 항목: 부족하나 개선하고 있다는 긍정적 변화 가능성 포함.
-                           - **'학습(제안)'** 항목: 학습에 대한 노력과 보완 필요 명시.
-                        6. **제약 사항**: 
-                           - **온점(.)과 반점(,)**을 제외한 특수문자 사용 금지.
-                           - 외래어/영어 금지.
-                           - "강한 맞춤법 규칙" 적용.
+                            [학생 데이터 (이번 요청 분)]
+                            ${JSON.stringify(batch)}
 
-                        [출력 형식: JSON Array]
-                        [ { "id": 1, "name": "학생이름", "result": "작성된 줄글..." }, ... ]
-                    `;
-                    const result = await callGemini(prompt);
-                    setBehaviorResults(result);
+                            [작성 규칙 - **분량 준수 최우선**]
+                            1. **목표 분량**: ${targetBytes} Bytes (한글 1자당 3Byte 계산)
+                            2. **필수 글자 수**: **공백 포함 한글 약 ${minChars}자 ~ ${maxChars}자 사이**로 작성하세요.
+                               - **중요**: 분량이 너무 적으면 절대 안 됩니다. 접속사(그리고, 또한, 반면 등)와 부사(매우, 성실히, 꾸준히 등)를 적극 사용하여 문장을 길고 풍부하게 만드세요.
+                               - 각 학생당 **최소 5~7 문장 이상**이 되어야 합니다.
+                            3. **주어 생략**: "학생1은", "OOO는"과 같은 주어를 절대 사용하지 마세요.
+                            4. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
+                            5. **특성 반영 로직**:
+                               - 상태가 **'긍정(우수)'**인 항목: 해당 특성이 우수하다는 칭찬 문구 작성.
+                               - 상태가 **'지도필요'**인 항목: 부족하나 개선하고 있다는 긍정적 변화 가능성 포함.
+                               - **'학습(제안)'** 항목: 학습에 대한 노력과 보완 필요 명시.
+                            6. **제약 사항**: 
+                               - **온점(.)과 반점(,)**을 제외한 특수문자 사용 금지.
+                               - 외래어/영어 금지.
+                               - "강한 맞춤법 규칙" 적용.
+
+                            [출력 형식: JSON Array]
+                            [ { "id": 1, "name": "학생이름", "result": "작성된 줄글..." }, ... ]
+                        `;
+
+                        const result = await callGemini(prompt);
+                        if (Array.isArray(result)) {
+                            accumulatedResults = [...accumulatedResults, ...result];
+                            // 중간 결과 보여주기 위해 state 업데이트 (선택사항)
+                            setBehaviorResults([...accumulatedResults]);
+                        }
+                    }
                 } catch (err) {
-                    setError(err.message);
+                    setError(`생성 중 오류가 발생했습니다: ${err.message}`);
                 } finally {
                     setLoading(false);
+                    setProgressMsg('');
                 }
             };
 
@@ -436,6 +457,7 @@
                     return;
                 }
                 setLoading(true);
+                setProgressMsg('문장을 생성하고 있습니다...');
                 setError('');
                 setCreativeResults(null);
 
@@ -449,7 +471,6 @@
 
                         [작성 규칙 - **엄격 준수**]
                         1. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
-                           - 예: "활동에 적극적으로 참여함.", "리더십이 돋보임."
                         2. **수량**: 각 입력 문장에 대해, 요청된 'count' 개수만큼의 변형 문장을 생성하세요.
                         3. **내용**: 원문이 가진 긍정적인 맥락과 핵심 키워드는 유지하되, 서술어와 표현 방식을 다양하게 바꾸세요.
                         4. **특수문자 제한**: **온점(.)과 반점(,)**을 제외한 특수문자 사용 금지.
@@ -470,6 +491,7 @@
                     setError(err.message);
                 } finally {
                     setLoading(false);
+                    setProgressMsg('');
                 }
             };
 
@@ -607,7 +629,7 @@
                                 disabled={loading}
                                 className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
                             >
-                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>생성 중...</div> : '평어 생성하기'}
+                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg || '평어 생성하기'}</div> : '평어 생성하기'}
                             </button>
 
                             {/* Comment Results */}
@@ -788,7 +810,7 @@
                                 disabled={loading}
                                 className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
                             >
-                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>생성 중...</div> : '행발 생성하기'}
+                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg}</div> : '행발 생성하기'}
                             </button>
 
                             {/* Behavior Results */}
@@ -873,7 +895,7 @@
                                 disabled={loading}
                                 className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-purple-600 hover:bg-purple-700'}`}
                             >
-                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>생성 중...</div> : '유사 문장 생성하기'}
+                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg || '유사 문장 생성하기'}</div> : '유사 문장 생성하기'}
                             </button>
 
                             {/* Creative Results */}
