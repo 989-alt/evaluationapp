@@ -124,16 +124,12 @@
                 alert('복사되었습니다.');
             };
 
-            // 바이트 계산 함수 (한글 3바이트, 그 외 1바이트)
             const calculateBytes = (str) => {
                 let bytes = 0;
                 for (let i = 0; i < str.length; i++) {
                     const code = str.charCodeAt(i);
-                    if (code > 127) {
-                        bytes += 3;
-                    } else {
-                        bytes += 1;
-                    }
+                    if (code > 127) bytes += 3;
+                    else bytes += 1;
                 }
                 return bytes;
             };
@@ -278,7 +274,7 @@
                             { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
                         ],
                         generationConfig: {
-                            temperature: 0.8, // 약간 낮춰서 지시 이행력 강화
+                            temperature: 0.8,
                             maxOutputTokens: 8192,
                             responseMimeType: "application/json"
                         }
@@ -315,7 +311,7 @@
                 }
             };
 
-            // 1. 평어 생성 함수
+            // 1. 평어 생성 함수 (Batch Processing 적용)
             const generateComments = async () => {
                 const validStandards = standards.filter(s => s.trim() !== '');
                 if (validStandards.length === 0) {
@@ -323,41 +319,57 @@
                     return;
                 }
                 setLoading(true);
-                setProgressMsg('평어를 생성하고 있습니다...');
                 setError('');
-                setCommentResults(null);
+                setCommentResults([]); // 초기화
+
+                // BATCH SIZE 설정 (성취기준 3개씩 끊어서 요청)
+                const BATCH_SIZE = 3;
+                const totalBatches = Math.ceil(validStandards.length / BATCH_SIZE);
+                let accumulatedResults = [];
 
                 try {
-                    const prompt = `
-                        당신은 교사의 평가 업무를 돕는 AI 보조 도구입니다. 
-                        다음 지침을 엄격히 준수하여 "평어(평가 문장)"를 생성하세요.
+                    for (let i = 0; i < totalBatches; i++) {
+                        const start = i * BATCH_SIZE;
+                        const end = start + BATCH_SIZE;
+                        const batch = validStandards.slice(start, end);
 
-                        [입력된 성취 기준 목록]
-                        ${JSON.stringify(validStandards)}
+                        setProgressMsg(`성취 기준 ${start + 1}~${Math.min(end, validStandards.length)}개 처리 중... (${i+1}/${totalBatches})`);
 
-                        [생성 규칙]
-                        1. 입력된 **각각의 성취 기준마다** 아래 개수만큼 문장을 생성해야 합니다.
-                        2. **각 성취 기준 당** 생성 개수:
-                           - "매우 잘함": ${counts.veryGood}개
-                           - "잘함": ${counts.good}개
-                           - "보통": ${counts.average}개
-                           - "노력요함": ${counts.needsEffort}개
+                        const prompt = `
+                            당신은 교사의 평가 업무를 돕는 AI 보조 도구입니다. 
+                            다음 지침을 엄격히 준수하여 "평어(평가 문장)"를 생성하세요.
+
+                            [이번 요청의 성취 기준 목록]
+                            ${JSON.stringify(batch)}
+
+                            [생성 규칙]
+                            1. 입력된 **각각의 성취 기준마다** 아래 개수만큼 문장을 생성해야 합니다.
+                            2. **각 성취 기준 당** 생성 개수:
+                               - "매우 잘함": ${counts.veryGood}개
+                               - "잘함": ${counts.good}개
+                               - "보통": ${counts.average}개
+                               - "노력요함": ${counts.needsEffort}개
+                            
+                            [필수 제약 조건]
+                            1. **어미**: 반드시 명사형(예: -함., -임., -것.)으로 끝내세요.
+                            2. **특수문자**: 따옴표, 괄호 등 특수문자 절대 사용 금지.
+                            3. **맞춤법**: "강한 맞춤법 규칙"을 적용.
+                            
+                            [출력 형식: JSON Array]
+                            [ 
+                              { 
+                                "standard": "성취기준 내용", 
+                                "levels": { "veryGood": ["..."], "good": ["..."], "average": ["..."], "needsEffort": ["..."] } 
+                              }, ...
+                            ]
+                        `;
                         
-                        [필수 제약 조건]
-                        1. **어미**: 반드시 명사형(예: -함., -임., -것.)으로 끝내세요.
-                        2. **특수문자**: 따옴표, 괄호 등 특수문자 절대 사용 금지.
-                        3. **맞춤법**: "강한 맞춤법 규칙"을 적용.
-                        
-                        [출력 형식: JSON Array]
-                        [ 
-                          { 
-                            "standard": "성취기준 내용", 
-                            "levels": { "veryGood": ["..."], "good": ["..."], "average": ["..."], "needsEffort": ["..."] } 
-                          }, ...
-                        ]
-                    `;
-                    const result = await callGemini(prompt);
-                    setCommentResults(result);
+                        const result = await callGemini(prompt);
+                        if (Array.isArray(result)) {
+                            accumulatedResults = [...accumulatedResults, ...result];
+                            setCommentResults([...accumulatedResults]); // 중간 업데이트
+                        }
+                    }
                     setActiveTab(0);
                 } catch (err) {
                     setError(err.message);
@@ -367,13 +379,12 @@
                 }
             };
 
-            // 2. 행발 생성 함수 (Batch Processing 적용)
+            // 2. 행발 생성 함수 (Batch Processing)
             const generateBehavior = async () => {
                 setLoading(true);
                 setError('');
-                setBehaviorResults([]); // 초기화
+                setBehaviorResults([]); 
 
-                // 데이터 준비
                 const allStudents = students.map(s => {
                     const traits = [];
                     s.checks.forEach((status, name) => {
@@ -389,12 +400,9 @@
                     };
                 });
 
-                // 목표 글자 수 계산 (한글 3바이트 기준)
-                // targetBytes가 700이면 -> 약 233자.
                 const minChars = Math.floor((targetBytes - 50) / 3);
                 const maxChars = Math.floor((targetBytes + 100) / 3);
 
-                // BATCH SIZE 설정 (5명씩 끊어서 요청)
                 const BATCH_SIZE = 5;
                 const totalBatches = Math.ceil(allStudents.length / BATCH_SIZE);
                 let accumulatedResults = [];
@@ -437,7 +445,6 @@
                         const result = await callGemini(prompt);
                         if (Array.isArray(result)) {
                             accumulatedResults = [...accumulatedResults, ...result];
-                            // 중간 결과 보여주기 위해 state 업데이트 (선택사항)
                             setBehaviorResults([...accumulatedResults]);
                         }
                     }
@@ -810,7 +817,7 @@
                                 disabled={loading}
                                 className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
                             >
-                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg}</div> : '행발 생성하기'}
+                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg || '행발 생성하기'}</div> : '행발 생성하기'}
                             </button>
 
                             {/* Behavior Results */}
