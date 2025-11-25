@@ -122,6 +122,22 @@
                 alert('복사되었습니다.');
             };
 
+            // 바이트 계산 함수 (한글 3바이트, 그 외 1바이트)
+            const calculateBytes = (str) => {
+                let bytes = 0;
+                for (let i = 0; i < str.length; i++) {
+                    const code = str.charCodeAt(i);
+                    // 한글 범위 등 2바이트 이상 문자들을 3바이트로 계산 (사용자 요청)
+                    // 일반적인 ASCII 범위(0~127)는 1바이트, 그 외는 3바이트로 처리
+                    if (code > 127) {
+                        bytes += 3;
+                    } else {
+                        bytes += 1;
+                    }
+                }
+                return bytes;
+            };
+
             // --- Logic: Comment Generator ---
             const addStandard = () => setStandards([...standards, '']);
             const removeStandard = (idx) => {
@@ -377,6 +393,9 @@
                 setBehaviorResults(null);
 
                 try {
+                    // 목표 글자 수 계산 (한글 1자 = 3바이트, 대략적인 글자 수 가이드 제공)
+                    const approxChars = Math.floor(targetBytes / 3);
+
                     const prompt = `
                         당신은 담임 교사로서 학생의 "행동특성 및 종합의견(행발)"을 작성해야 합니다.
                         아래 학생별 특성 데이터를 바탕으로 줄글을 작성해주세요.
@@ -389,17 +408,21 @@
                         2. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
                            - 잘못된 예: -함, -임 (마침표 없음), -것임., -보임., -합니다.
                            - 올바른 예: 성실히 수행함., 우수한 모습을 보임.
-                        3. **분량 필수 준수**: 목표 바이트 수는 **${targetBytes} Bytes**입니다. (오차 ±100 Bytes 이내).
-                           - **한글 기준 약 ${Math.floor(targetBytes / 3)}~${Math.floor(targetBytes / 2)} 글자** 내외가 되도록 작성하세요.
-                           - 생성된 결과물이 **목표 분량보다 지나치게 길어지지 않도록** 주의하세요.
-                           - 분량을 맞추기 위해 가상의 구체적인 일화나 예시를 지어내지 마세요. 있는 그대로의 특성을 서술하세요.
-                        4. **특성 반영 로직**:
+                        3. **분량 필수 준수**: 
+                           - **목표 바이트**: ${targetBytes} Bytes
+                           - **목표 글자 수(공백 포함)**: **약 ${approxChars}자** 내외
+                           - **오차 범위**: ±100 Bytes (약 ±33글자)
+                           - **주의**: 내용을 과도하게 늘려 2~3배 분량이 되지 않도록 **목표 글자 수(${approxChars}자)**에 맞춰 간결하면서도 알차게 작성하세요.
+                        4. **내용 구성**:
+                           - 분량을 채우기 위해 가상의 구체적인 일화나 상황극을 지어내지 마세요.
+                           - 대신, 선택된 특성(키워드)들에 대해 학생의 평소 태도와 마음가짐을 **다양한 형용사와 부사를 활용하여 풍부하게 묘사**하세요.
+                        5. **특성 반영 로직**:
                            - 상태가 **'긍정(우수)'**인 항목: 해당 특성이 우수하다는 칭찬 문구 작성.
                            - 상태가 **'지도필요(부족함/개선필요)'**인 항목: 부족하나 개선하고 있다는 긍정적 변화 가능성 포함.
                            - **'학습(제안)'** 항목: 학습에 대한 노력과 보완 필요 명시.
-                        5. **특수문자 제한**: **온점(.)과 반점(,)**을 제외한 그 어떤 특수문자(따옴표, 괄호 등)도 사용 금지.
-                        6. **외래어/영어 금지**.
-                        7. **맞춤법**: "강한 맞춤법 규칙" 적용.
+                        6. **특수문자 제한**: **온점(.)과 반점(,)**을 제외한 그 어떤 특수문자(따옴표, 괄호 등)도 사용 금지.
+                        7. **외래어/영어 금지**.
+                        8. **맞춤법**: "강한 맞춤법 규칙" 적용.
 
                         [출력 형식: JSON Array]
                         [ { "id": 1, "name": "학생이름", "result": "작성된 줄글..." }, ... ]
@@ -785,7 +808,7 @@
                                                 <span className="font-bold text-green-900">
                                                     {res.name || `학생 ${res.id}`} 
                                                     <span className="text-xs font-normal text-green-700 ml-2">
-                                                        (약 {new TextEncoder().encode(res.result).length} Bytes)
+                                                        (약 {calculateBytes(res.result)} Bytes)
                                                     </span>
                                                 </span>
                                                 <button onClick={() => copyToClipboard(res.result)} className="text-xs bg-white border border-green-200 px-2 py-1 rounded text-green-700 hover:bg-green-100">
