@@ -278,12 +278,16 @@
                         당신은 교사의 평가 업무를 돕는 AI 보조 도구입니다. 
                         다음 지침을 엄격히 준수하여 "평어(평가 문장)"를 생성하세요.
 
-                        [입력된 성취 기준]
+                        [입력된 성취 기준 목록]
                         ${JSON.stringify(validStandards)}
 
-                        [요청 사항]
-                        1. 각 성취 기준별 4단계(매우 잘함, 잘함, 보통, 노력요함) 생성.
-                        2. 개수: 매우 잘함(${counts.veryGood}), 잘함(${counts.good}), 보통(${counts.average}), 노력요함(${counts.needsEffort})
+                        [생성 규칙 - **엄격 준수**]
+                        1. 입력된 **각각의 성취 기준마다** 아래 개수만큼 문장을 생성해야 합니다. (예: 성취 기준이 2개면 결과 세트도 2개가 나와야 함)
+                        2. **각 성취 기준 당** 생성 개수:
+                           - "매우 잘함": ${counts.veryGood}개
+                           - "잘함": ${counts.good}개
+                           - "보통": ${counts.average}개
+                           - "노력요함": ${counts.needsEffort}개
                         
                         [필수 제약 조건 - **맞춤법 검사 필수**]
                         1. **어미**: 반드시 명사형(예: -함., -임., -것.)으로 끝내세요. 서술형(~합니다) 금지.
@@ -292,7 +296,18 @@
                         4. **다양성**: 동일 단어 반복 회피, 문장 구조 다양화.
                         
                         [출력 형식: JSON Array]
-                        [ { "standard": "...", "levels": { "veryGood": ["..."], "good": ["..."], "average": ["..."], "needsEffort": ["..."] } } ]
+                        [ 
+                          { 
+                            "standard": "첫 번째 성취기준 내용", 
+                            "levels": { 
+                              "veryGood": ["..."], 
+                              "good": ["..."], 
+                              "average": ["..."], 
+                              "needsEffort": ["..."] 
+                            } 
+                          },
+                          ...
+                        ]
                     `;
                     const result = await callGemini(prompt);
                     setCommentResults(result);
