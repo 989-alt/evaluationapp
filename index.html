@@ -270,10 +270,32 @@
                 }
 
                 const data = await response.json();
-                const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (!rawText) throw new Error('AI 응답이 비어있습니다.');
+                
+                // Enhanced Error Handling
+                if (!data.candidates || data.candidates.length === 0) {
+                    throw new Error('AI 응답 데이터가 없습니다. (Candidates missing)');
+                }
 
-                return JSON.parse(rawText);
+                const candidate = data.candidates[0];
+                
+                // Check safety block
+                if (candidate.finishReason === 'SAFETY') {
+                    throw new Error('생성된 내용이 안전 정책에 의해 차단되었습니다.\n(Safety Filter Blocked)');
+                }
+
+                const rawText = candidate.content?.parts?.[0]?.text;
+                if (!rawText) {
+                    throw new Error(`AI 응답이 비어있습니다. (FinishReason: ${candidate.finishReason || 'Unknown'})`);
+                }
+
+                try {
+                    // Remove potential markdown code blocks
+                    const cleanedText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+                    return JSON.parse(cleanedText);
+                } catch (e) {
+                    console.error("JSON Parsing Failed. Raw text:", rawText);
+                    throw new Error(`AI 응답을 처리할 수 없습니다.\n원인: JSON 형식이 아님.\n(받은 데이터: ${rawText.slice(0, 50)}...)`);
+                }
             };
 
             // 1. 평어 생성 함수
@@ -368,8 +390,9 @@
                            - 잘못된 예: -함, -임 (마침표 없음), -것임., -보임., -합니다.
                            - 올바른 예: 성실히 수행함., 우수한 모습을 보임.
                         3. **분량 필수 준수**: 목표 바이트 수는 **${targetBytes} Bytes**입니다. (오차 ±100 Bytes 이내).
-                           - 분량을 채우기 위해 가상의 구체적인 일화나 예시를 지어내지 마세요.
-                           - 대신, 학생의 태도나 특성에 대한 설명을 풍부한 어휘와 수식어를 사용하여 구체적이고 자세하게 서술하세요. 문장을 길게 연결하여 분량을 확보하세요.
+                           - **한글 기준 약 ${Math.floor(targetBytes / 3)}~${Math.floor(targetBytes / 2)} 글자** 내외가 되도록 작성하세요.
+                           - 생성된 결과물이 **목표 분량보다 지나치게 길어지지 않도록** 주의하세요.
+                           - 분량을 맞추기 위해 가상의 구체적인 일화나 예시를 지어내지 마세요. 있는 그대로의 특성을 서술하세요.
                         4. **특성 반영 로직**:
                            - 상태가 **'긍정(우수)'**인 항목: 해당 특성이 우수하다는 칭찬 문구 작성.
                            - 상태가 **'지도필요(부족함/개선필요)'**인 항목: 부족하나 개선하고 있다는 긍정적 변화 가능성 포함.
