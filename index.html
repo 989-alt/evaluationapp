@@ -300,7 +300,6 @@
 
                 const rawText = candidate.content?.parts?.[0]?.text;
                 if (!rawText) {
-                    // Max Token 등으로 잘린 경우 처리
                     throw new Error(`AI 응답이 비어있거나 잘렸습니다. (FinishReason: ${candidate.finishReason}) - 생성 양을 줄여보세요.`);
                 }
 
@@ -313,7 +312,7 @@
                 }
             };
 
-            // 1. 평어 생성 함수 (Batch Processing 적용 - 1개씩)
+            // 1. 평어 생성 함수 (Batch Processing 적용 - 3개씩)
             const generateComments = async () => {
                 const validStandards = standards.filter(s => s.trim() !== '');
                 if (validStandards.length === 0) {
@@ -324,8 +323,8 @@
                 setError('');
                 setCommentResults([]); // 초기화
 
-                // BATCH SIZE 설정 (안정성을 위해 1개씩 처리)
-                const BATCH_SIZE = 1;
+                // BATCH SIZE 설정 (속도를 위해 3개로 변경)
+                const BATCH_SIZE = 3;
                 const totalBatches = Math.ceil(validStandards.length / BATCH_SIZE);
                 let accumulatedResults = [];
 
