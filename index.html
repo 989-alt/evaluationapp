@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 교사 보조 도구 (평어 & 행발)</title>
+    <title>AI 교사 보조 도구 (평어 & 행발 & 창체)</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -79,7 +79,7 @@
 
         const App = () => {
             // --- Common State ---
-            const [mode, setMode] = useState('comment'); // 'comment' | 'behavior'
+            const [mode, setMode] = useState('comment'); // 'comment' | 'behavior' | 'creative'
             const [apiKey, setApiKey] = useState('');
             
             // 모델 관련 State
@@ -95,18 +95,21 @@
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState('');
 
-            // --- Comment Gen State ---
+            // --- Comment Gen State (평어) ---
             const [standards, setStandards] = useState(['']);
             const [counts, setCounts] = useState({ veryGood: 3, good: 3, average: 3, needsEffort: 3 });
             const [commentResults, setCommentResults] = useState(null);
             const [activeTab, setActiveTab] = useState(0);
 
-            // --- Behavior Gen State ---
+            // --- Behavior Gen State (행발) ---
             const [studentCount, setStudentCount] = useState(1);
-            // checks: Map<string, number> (key: traitName, value: 1(positive) or 2(negative))
             const [students, setStudents] = useState([{ id: 1, name: '', checks: new Map() }]);
             const [targetBytes, setTargetBytes] = useState(500); 
             const [behaviorResults, setBehaviorResults] = useState(null);
+
+            // --- Creative Gen State (창체) ---
+            const [creativeInputs, setCreativeInputs] = useState([{ text: '', count: 3 }]);
+            const [creativeResults, setCreativeResults] = useState(null);
 
             // --- Helpers ---
             const copyToClipboard = (text) => {
@@ -153,22 +156,17 @@
                 });
             };
 
-            // 3-state Toggle: 0 (None) -> 1 (Positive/Blue) -> 2 (Negative/Orange) -> 0
             const toggleCheck = (studentIndex, trait) => {
                 setStudents(prev => {
                     const newArr = [...prev];
                     const student = { ...newArr[studentIndex] };
-                    // Clone Map to trigger re-render
                     const newChecks = new Map(student.checks);
                     
                     const currentVal = newChecks.get(trait) || 0;
                     const nextVal = (currentVal + 1) % 3;
 
-                    if (nextVal === 0) {
-                        newChecks.delete(trait);
-                    } else {
-                        newChecks.set(trait, nextVal);
-                    }
+                    if (nextVal === 0) newChecks.delete(trait);
+                    else newChecks.set(trait, nextVal);
                     
                     student.checks = newChecks;
                     newArr[studentIndex] = student;
@@ -182,6 +180,22 @@
                     newArr[idx] = { ...newArr[idx], name: val };
                     return newArr;
                 });
+            };
+
+            // --- Logic: Creative Generator ---
+            const addCreativeInput = () => setCreativeInputs([...creativeInputs, { text: '', count: 3 }]);
+            const removeCreativeInput = (idx) => {
+                const newInputs = creativeInputs.filter((_, i) => i !== idx);
+                setCreativeInputs(newInputs.length ? newInputs : [{ text: '', count: 3 }]);
+            };
+            const handleCreativeChange = (idx, field, val) => {
+                const newInputs = [...creativeInputs];
+                if (field === 'count') {
+                    newInputs[idx][field] = Math.min(20, Math.max(1, parseInt(val) || 1));
+                } else {
+                    newInputs[idx][field] = val;
+                }
+                setCreativeInputs(newInputs);
             };
 
             // --- API Model Fetching ---
@@ -282,7 +296,7 @@
                         ${JSON.stringify(validStandards)}
 
                         [생성 규칙 - **엄격 준수**]
-                        1. 입력된 **각각의 성취 기준마다** 아래 개수만큼 문장을 생성해야 합니다. (예: 성취 기준이 2개면 결과 세트도 2개가 나와야 함)
+                        1. 입력된 **각각의 성취 기준마다** 아래 개수만큼 문장을 생성해야 합니다.
                         2. **각 성취 기준 당** 생성 개수:
                            - "매우 잘함": ${counts.veryGood}개
                            - "잘함": ${counts.good}개
@@ -321,7 +335,6 @@
 
             // 2. 행발 생성 함수
             const generateBehavior = async () => {
-                // Prepare data: convert map to array of objects with status
                 const studentData = students.map(s => {
                     const traits = [];
                     s.checks.forEach((status, name) => {
@@ -332,7 +345,7 @@
                     });
                     return {
                         id: s.id,
-                        name: s.name || `학생${s.id}`, // 이름은 보내지만 출력시엔 생략 요청
+                        name: s.name || `학생${s.id}`,
                         traits: traits
                     };
                 });
@@ -350,14 +363,16 @@
                         ${JSON.stringify(studentData)}
 
                         [작성 규칙 - **엄격 준수**]
-                        1. **주어 생략**: "학생1은", "OOO는"과 같은 주어를 절대 사용하지 마세요. 바로 특성 서술부터 시작하세요. (예: "평소 예의가 바르고...")
-                        2. **어미**: 문장의 끝은 반드시 **명사형(예: -함., -임., -것.)**으로 끝나야 합니다. "~합니다", "~이다", "~해요" 등의 서술형 어미는 **절대 사용하지 마세요**.
+                        1. **주어 생략**: "학생1은", "OOO는"과 같은 주어를 절대 사용하지 마세요. 바로 특성 서술부터 시작하세요.
+                        2. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
+                           - 잘못된 예: -함, -임 (마침표 없음), -것임., -보임., -합니다.
+                           - 올바른 예: 성실히 수행함., 우수한 모습을 보임.
                         3. **분량**: 각 학생당 약 ${targetBytes}바이트 내외.
                         4. **특성 반영 로직**:
                            - 상태가 **'긍정(우수)'**인 항목: 해당 특성이 우수하다는 칭찬 문구 작성.
-                           - 상태가 **'지도필요(부족함/개선필요)'**인 항목: 해당 특성이 다소 부족하나, **교사의 지도나 본인의 노력을 통해 개선하고 있다는 긍정적 변화 가능성**을 포함하여 작성.
-                           - **'학습(제안)'** 항목: 상태와 무관하게, 학습에 대한 구체적인 노력과 보완이 필요하다는 점을 명시.
-                        5. **특수문자 제한**: **온점(.)과 반점(,)**을 제외한 그 어떤 특수문자(따옴표, 괄호, 줄표, 꺽쇠 등)도 사용하지 마세요.
+                           - 상태가 **'지도필요(부족함/개선필요)'**인 항목: 부족하나 개선하고 있다는 긍정적 변화 가능성 포함.
+                           - **'학습(제안)'** 항목: 학습에 대한 노력과 보완 필요 명시.
+                        5. **특수문자 제한**: **온점(.)과 반점(,)**을 제외한 그 어떤 특수문자(따옴표, 괄호 등)도 사용 금지.
                         6. **외래어/영어 금지**.
                         7. **맞춤법**: "강한 맞춤법 규칙" 적용.
 
@@ -373,12 +388,57 @@
                 }
             };
 
+            // 3. 창체 생성 함수
+            const generateCreative = async () => {
+                const validInputs = creativeInputs.filter(item => item.text.trim() !== '');
+                if (validInputs.length === 0) {
+                    setError('최소 하나 이상의 문장을 입력해주세요.');
+                    return;
+                }
+                setLoading(true);
+                setError('');
+                setCreativeResults(null);
+
+                try {
+                    const prompt = `
+                        당신은 교사의 학교생활기록부 작성을 돕는 AI입니다.
+                        입력된 문장(특기사항 예시)을 바탕으로, 비슷한 맥락이지만 표현이 다른 문장들을 생성해주세요.
+
+                        [입력 데이터]
+                        ${JSON.stringify(validInputs)}
+
+                        [작성 규칙 - **엄격 준수**]
+                        1. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
+                           - 예: "활동에 적극적으로 참여함.", "리더십이 돋보임."
+                        2. **수량**: 각 입력 문장에 대해, 요청된 'count' 개수만큼의 변형 문장을 생성하세요.
+                        3. **내용**: 원문이 가진 긍정적인 맥락과 핵심 키워드는 유지하되, 서술어와 표현 방식을 다양하게 바꾸세요.
+                        4. **특수문자 제한**: **온점(.)과 반점(,)**을 제외한 특수문자 사용 금지.
+                        5. **맞춤법**: "강한 맞춤법 규칙" 적용.
+
+                        [출력 형식: JSON Array]
+                        [
+                          {
+                            "original": "입력된 원문",
+                            "variations": ["변형 문장 1...", "변형 문장 2...", ...]
+                          },
+                          ...
+                        ]
+                    `;
+                    const result = await callGemini(prompt);
+                    setCreativeResults(result);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
             return (
                 <div className="min-h-screen py-8 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
                     {/* Header */}
                     <div className="text-center mb-8">
                         <h1 className="text-3xl font-extrabold text-gray-900">AI 교사 보조 도구</h1>
-                        <p className="text-gray-500 text-sm mt-1">평어 생성 및 행동발달 특성 작성 도우미</p>
+                        <p className="text-gray-500 text-sm mt-1">평어, 행발, 창체 특기사항 작성 도우미</p>
                     </div>
 
                     {/* API Key & Model Selection Zone */}
@@ -414,9 +474,6 @@
                                 </select>
                             </div>
                         </div>
-                        <div className="text-xs text-gray-500 mt-2">
-                            * '모델을 찾을 수 없음' 오류가 발생하면 <strong>[사용 가능 모델 조회]</strong> 버튼을 눌러 목록을 갱신하세요.
-                        </div>
                     </div>
 
                     {/* Navigation Tabs */}
@@ -432,6 +489,12 @@
                             className={`px-6 py-2 rounded-md font-bold transition ${mode === 'behavior' ? 'bg-green-600 text-white shadow' : 'text-gray-500 hover:bg-gray-100'}`}
                         >
                             행발 생성기
+                        </button>
+                        <button
+                            onClick={() => { setMode('creative'); setError(''); }}
+                            className={`px-6 py-2 rounded-md font-bold transition ${mode === 'creative' ? 'bg-purple-600 text-white shadow' : 'text-gray-500 hover:bg-gray-100'}`}
+                        >
+                            창체 생성기
                         </button>
                     </div>
 
@@ -706,6 +769,92 @@
                                             </div>
                                             <div className="p-4 text-gray-700 text-sm leading-relaxed whitespace-pre-wrap">
                                                 {res.result}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ================= MODE 3: 창체 생성기 ================= */}
+                    {mode === 'creative' && (
+                        <div className="animate-fade-in">
+                            <div className="bg-white shadow rounded-lg p-6 mb-6 border border-gray-200">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="font-bold text-lg text-gray-800">창체 특기사항 입력</h3>
+                                    <button onClick={addCreativeInput} className="text-sm bg-purple-100 text-purple-700 px-3 py-1 rounded hover:bg-purple-200 font-bold">+ 문장 추가</button>
+                                </div>
+                                
+                                <div className="space-y-4">
+                                    {creativeInputs.map((input, idx) => (
+                                        <div key={idx} className="flex flex-col sm:flex-row gap-3 items-start sm:items-center bg-gray-50 p-3 rounded border border-gray-200">
+                                            <div className="flex-1 w-full">
+                                                <input
+                                                    type="text"
+                                                    value={input.text}
+                                                    onChange={(e) => handleCreativeChange(idx, 'text', e.target.value)}
+                                                    placeholder="예: 학교 축제에서 부스 운영을 주도적으로 수행함."
+                                                    className="w-full p-2 border border-gray-300 rounded focus:border-purple-500 outline-none"
+                                                />
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm font-medium text-gray-600 whitespace-nowrap">생성 개수:</span>
+                                                <input
+                                                    type="number"
+                                                    value={input.count}
+                                                    onChange={(e) => handleCreativeChange(idx, 'count', e.target.value)}
+                                                    className="w-16 p-2 border border-gray-300 rounded focus:border-purple-500 outline-none text-right"
+                                                    min="1" max="20"
+                                                />
+                                                <span className="text-sm text-gray-500">개</span>
+                                            </div>
+                                            {creativeInputs.length > 1 && (
+                                                <button 
+                                                    onClick={() => removeCreativeInput(idx)} 
+                                                    className="text-red-500 hover:text-red-700 p-2"
+                                                    title="삭제"
+                                                >
+                                                    ✕
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="mt-4 text-right text-xs text-gray-500">
+                                    <p>* 어미는 "-함.", "-임."으로 고정됩니다.</p>
+                                    <p>* 강한 맞춤법 규칙이 적용됩니다.</p>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={generateCreative}
+                                disabled={loading}
+                                className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-purple-600 hover:bg-purple-700'}`}
+                            >
+                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>생성 중...</div> : '유사 문장 생성하기'}
+                            </button>
+
+                            {/* Creative Results */}
+                            {creativeResults && (
+                                <div className="mt-8 space-y-6">
+                                    {creativeResults.map((item, idx) => (
+                                        <div key={idx} className="bg-white shadow rounded-lg border border-gray-200 overflow-hidden">
+                                            <div className="bg-purple-50 px-4 py-3 border-b border-purple-100">
+                                                <h4 className="font-bold text-purple-900 text-sm mb-1">[원문]</h4>
+                                                <p className="text-gray-700 text-sm">{item.original}</p>
+                                            </div>
+                                            <div className="p-4">
+                                                <h4 className="font-bold text-gray-800 text-sm mb-3">✨ 생성된 변형 문장 ({item.variations.length}개)</h4>
+                                                <ul className="space-y-2">
+                                                    {item.variations.map((sent, sIdx) => (
+                                                        <li key={sIdx} onClick={() => copyToClipboard(sent)} className="text-sm p-3 bg-gray-50 hover:bg-purple-50 rounded border border-gray-100 cursor-pointer group flex transition">
+                                                            <span className="flex-1 text-gray-700">{sent}</span>
+                                                            <span className="hidden group-hover:block text-xs text-purple-400 ml-2 font-medium">복사</span>
+                                                        </li>
+                                                    ))}
+                                                </ul>
                                             </div>
                                         </div>
                                     ))}
