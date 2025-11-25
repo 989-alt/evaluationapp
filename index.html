@@ -127,8 +127,6 @@
                 let bytes = 0;
                 for (let i = 0; i < str.length; i++) {
                     const code = str.charCodeAt(i);
-                    // 한글 범위 등 2바이트 이상 문자들을 3바이트로 계산 (사용자 요청)
-                    // 일반적인 ASCII 범위(0~127)는 1바이트, 그 외는 3바이트로 처리
                     if (code > 127) {
                         bytes += 3;
                     } else {
@@ -287,14 +285,12 @@
 
                 const data = await response.json();
                 
-                // Enhanced Error Handling
                 if (!data.candidates || data.candidates.length === 0) {
                     throw new Error('AI 응답 데이터가 없습니다. (Candidates missing)');
                 }
 
                 const candidate = data.candidates[0];
                 
-                // Check safety block
                 if (candidate.finishReason === 'SAFETY') {
                     throw new Error('생성된 내용이 안전 정책에 의해 차단되었습니다.\n(Safety Filter Blocked)');
                 }
@@ -305,7 +301,6 @@
                 }
 
                 try {
-                    // Remove potential markdown code blocks
                     const cleanedText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
                     return JSON.parse(cleanedText);
                 } catch (e) {
@@ -393,8 +388,10 @@
                 setBehaviorResults(null);
 
                 try {
-                    // 목표 글자 수 계산 (한글 1자 = 3바이트, 대략적인 글자 수 가이드 제공)
-                    const approxChars = Math.floor(targetBytes / 3);
+                    // 한글 3바이트, 공백/숫자 1바이트를 고려한 대략적인 글자 수 목표 계산
+                    // 목표 바이트를 3으로 나누어 '한글 기준 글자 수' 범위를 설정해 줌
+                    const minChars = Math.floor((targetBytes - 100) / 3);
+                    const maxChars = Math.floor((targetBytes + 100) / 3);
 
                     const prompt = `
                         당신은 담임 교사로서 학생의 "행동특성 및 종합의견(행발)"을 작성해야 합니다.
@@ -403,26 +400,21 @@
                         [학생 데이터]
                         ${JSON.stringify(studentData)}
 
-                        [작성 규칙 - **엄격 준수**]
-                        1. **주어 생략**: "학생1은", "OOO는"과 같은 주어를 절대 사용하지 마세요. 바로 특성 서술부터 시작하세요.
-                        2. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
-                           - 잘못된 예: -함, -임 (마침표 없음), -것임., -보임., -합니다.
-                           - 올바른 예: 성실히 수행함., 우수한 모습을 보임.
-                        3. **분량 필수 준수**: 
-                           - **목표 바이트**: ${targetBytes} Bytes
-                           - **목표 글자 수(공백 포함)**: **약 ${approxChars}자** 내외
-                           - **오차 범위**: ±100 Bytes (약 ±33글자)
-                           - **주의**: 내용을 과도하게 늘려 2~3배 분량이 되지 않도록 **목표 글자 수(${approxChars}자)**에 맞춰 간결하면서도 알차게 작성하세요.
-                        4. **내용 구성**:
-                           - 분량을 채우기 위해 가상의 구체적인 일화나 상황극을 지어내지 마세요.
-                           - 대신, 선택된 특성(키워드)들에 대해 학생의 평소 태도와 마음가짐을 **다양한 형용사와 부사를 활용하여 풍부하게 묘사**하세요.
+                        [작성 규칙 - **분량 준수 최우선**]
+                        1. **목표 분량**: ${targetBytes} Bytes (한글 1자당 3Byte 계산)
+                        2. **글자 수 가이드**: 생성되는 텍스트는 **반드시 한글 기준 약 ${minChars}자 이상, ${maxChars}자 이하**여야 합니다.
+                           - 바이트 수 오차를 ±100 Bytes 이내로 맞추기 위해 위 글자 수 범위를 엄격하게 지키세요.
+                           - 글이 너무 길어지면 내용을 요약하고, 너무 짧으면 수식어를 추가하여 길이를 맞추세요.
+                        3. **주어 생략**: "학생1은", "OOO는"과 같은 주어를 절대 사용하지 마세요.
+                        4. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
                         5. **특성 반영 로직**:
                            - 상태가 **'긍정(우수)'**인 항목: 해당 특성이 우수하다는 칭찬 문구 작성.
                            - 상태가 **'지도필요(부족함/개선필요)'**인 항목: 부족하나 개선하고 있다는 긍정적 변화 가능성 포함.
                            - **'학습(제안)'** 항목: 학습에 대한 노력과 보완 필요 명시.
-                        6. **특수문자 제한**: **온점(.)과 반점(,)**을 제외한 그 어떤 특수문자(따옴표, 괄호 등)도 사용 금지.
-                        7. **외래어/영어 금지**.
-                        8. **맞춤법**: "강한 맞춤법 규칙" 적용.
+                        6. **제약 사항**: 
+                           - **온점(.)과 반점(,)**을 제외한 특수문자 사용 금지.
+                           - 외래어/영어 금지.
+                           - "강한 맞춤법 규칙" 적용.
 
                         [출력 형식: JSON Array]
                         [ { "id": 1, "name": "학생이름", "result": "작성된 줄글..." }, ... ]
