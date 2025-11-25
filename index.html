@@ -125,6 +125,7 @@
             };
 
             const calculateBytes = (str) => {
+                if (!str) return 0;
                 let bytes = 0;
                 for (let i = 0; i < str.length; i++) {
                     const code = str.charCodeAt(i);
@@ -370,7 +371,10 @@
                             setCommentResults([...accumulatedResults]); // 중간 업데이트
                         }
                     }
-                    setActiveTab(0);
+                    // 완료 후 탭 초기화 (데이터가 있을 때만)
+                    if (accumulatedResults.length > 0) {
+                        setActiveTab(0);
+                    }
                 } catch (err) {
                     setError(err.message);
                 } finally {
@@ -640,7 +644,7 @@
                             </button>
 
                             {/* Comment Results */}
-                            {commentResults && (
+                            {commentResults && commentResults.length > 0 && (
                                 <div className="mt-8 bg-white shadow-lg rounded-lg overflow-hidden border border-gray-200">
                                     <div className="flex overflow-x-auto bg-gray-50 border-b">
                                         {commentResults.map((r, i) => (
@@ -655,7 +659,7 @@
                                     </div>
                                     <div className="p-6">
                                         <div className="bg-blue-50 p-3 rounded border border-blue-100 mb-6 text-sm text-blue-900 font-medium">
-                                            {commentResults[activeTab].standard}
+                                            {commentResults[activeTab]?.standard || '내용을 불러오는 중...'}
                                         </div>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                             {[
@@ -667,15 +671,17 @@
                                                 <div key={sec.k} className={`border ${sec.b} rounded-lg overflow-hidden`}>
                                                     <div className={`${sec.bg} px-3 py-2 font-bold text-gray-700 text-sm border-b ${sec.b} flex justify-between`}>
                                                         <span>{sec.t}</span>
-                                                        <span className="bg-white px-2 rounded-full border text-xs flex items-center">{commentResults[activeTab].levels[sec.k]?.length || 0}</span>
+                                                        <span className="bg-white px-2 rounded-full border text-xs flex items-center">
+                                                            {commentResults[activeTab]?.levels?.[sec.k]?.length || 0}
+                                                        </span>
                                                     </div>
                                                     <ul className="p-3 space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
-                                                        {commentResults[activeTab].levels[sec.k]?.map((s, idx) => (
+                                                        {commentResults[activeTab]?.levels?.[sec.k]?.map((s, idx) => (
                                                             <li key={idx} onClick={() => copyToClipboard(s)} className="text-sm p-2 hover:bg-gray-50 rounded cursor-pointer group flex">
                                                                 <span className="flex-1 text-gray-700">{s}</span>
                                                                 <span className="hidden group-hover:block text-xs text-gray-400 ml-1">복사</span>
                                                             </li>
-                                                        ))}
+                                                        )) || <li className="text-sm text-gray-400 p-2">생성된 문장이 없습니다.</li>}
                                                     </ul>
                                                 </div>
                                             ))}
