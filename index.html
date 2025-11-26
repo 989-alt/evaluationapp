@@ -62,6 +62,35 @@
             border-color: #f97316; /* orange-500 */
             color: #9a3412; /* orange-800 */
         }
+        /* Toast Notification Style */
+        .toast-notification {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(31, 41, 55, 0.9); /* Dark gray with opacity */
+            color: white;
+            padding: 10px 24px;
+            border-radius: 50px;
+            z-index: 9999;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+            pointer-events: none; /* 클릭 방지 */
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .toast-notification.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        .toast-notification.hide {
+            opacity: 0;
+            transform: translateX(-50%) translateY(10px);
+        }
     </style>
 </head>
 <body>
@@ -97,6 +126,9 @@
             const [progressMsg, setProgressMsg] = useState(''); // 진행 상황 메시지
             const [error, setError] = useState('');
 
+            // Toast State
+            const [toast, setToast] = useState({ show: false, msg: '' });
+
             // --- Comment Gen State (평어) ---
             const [standards, setStandards] = useState(['']);
             const [counts, setCounts] = useState({ veryGood: 3, good: 3, average: 3, needsEffort: 3 });
@@ -114,6 +146,13 @@
             const [creativeResults, setCreativeResults] = useState(null);
 
             // --- Helpers ---
+            const showToast = (message) => {
+                setToast({ show: true, msg: message });
+                setTimeout(() => {
+                    setToast(prev => ({ ...prev, show: false }));
+                }, 2000); // 2초 후 사라짐
+            };
+
             const copyToClipboard = (text) => {
                 const textarea = document.createElement('textarea');
                 textarea.value = text;
@@ -121,7 +160,7 @@
                 textarea.select();
                 document.execCommand('copy');
                 document.body.removeChild(textarea);
-                alert('복사되었습니다.');
+                showToast('📋 클립보드에 복사되었습니다!');
             };
 
             const calculateBytes = (str) => {
@@ -300,7 +339,7 @@
 
                 const rawText = candidate.content?.parts?.[0]?.text;
                 if (!rawText) {
-                    throw new Error(`AI 응답이 비어있거나 잘렸습니다. (FinishReason: ${candidate.finishReason}) - 생성 양을 줄여보세요.`);
+                    throw new Error(`AI 응답이 비어있습니다. (FinishReason: ${candidate.finishReason})`);
                 }
 
                 try {
@@ -308,7 +347,7 @@
                     return JSON.parse(cleanedText);
                 } catch (e) {
                     console.error("JSON Parsing Failed", rawText);
-                    throw new Error(`AI 응답을 처리할 수 없습니다. 데이터가 너무 많아 잘렸을 수 있습니다. 성취 기준을 나누어 입력해주세요.`);
+                    throw new Error(`AI 응답을 처리할 수 없습니다. JSON 형식이 아닙니다.`);
                 }
             };
 
@@ -323,7 +362,6 @@
                 setError('');
                 setCommentResults([]); // 초기화
 
-                // BATCH SIZE 설정 (속도를 위해 3개로 변경)
                 const BATCH_SIZE = 3;
                 const totalBatches = Math.ceil(validStandards.length / BATCH_SIZE);
                 let accumulatedResults = [];
@@ -368,11 +406,8 @@
                         const result = await callGemini(prompt);
                         if (Array.isArray(result)) {
                             accumulatedResults = [...accumulatedResults, ...result];
-                            setCommentResults([...accumulatedResults]); // 중간 업데이트
+                            setCommentResults([...accumulatedResults]); 
                         }
-                        
-                        // 무료 사용자를 위한 딜레이 (선택사항: 너무 빠르면 에러날 수 있음)
-                        // await new Promise(r => setTimeout(r, 500)); 
                     }
                     
                     if (accumulatedResults.length > 0) {
