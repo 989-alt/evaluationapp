@@ -129,6 +129,9 @@
             // Toast State
             const [toast, setToast] = useState({ show: false, msg: '' });
 
+            // Copied Items State (Set of unique IDs)
+            const [copiedSet, setCopiedSet] = useState(new Set());
+
             // --- Comment Gen State (평어) ---
             const [standards, setStandards] = useState(['']);
             const [counts, setCounts] = useState({ veryGood: 3, good: 3, average: 3, needsEffort: 3 });
@@ -153,7 +156,7 @@
                 }, 2000); // 2초 후 사라짐
             };
 
-            const copyToClipboard = (text) => {
+            const handleCopy = (text, id) => {
                 const textarea = document.createElement('textarea');
                 textarea.value = text;
                 document.body.appendChild(textarea);
@@ -161,6 +164,13 @@
                 document.execCommand('copy');
                 document.body.removeChild(textarea);
                 showToast('📋 클립보드에 복사되었습니다!');
+                
+                // 복사된 항목 상태 업데이트
+                setCopiedSet(prev => {
+                    const newSet = new Set(prev);
+                    newSet.add(id);
+                    return newSet;
+                });
             };
 
             const calculateBytes = (str) => {
@@ -360,7 +370,8 @@
                 }
                 setLoading(true);
                 setError('');
-                setCommentResults([]); // 초기화
+                setCommentResults([]); 
+                setCopiedSet(new Set()); // 초기화
 
                 const BATCH_SIZE = 3;
                 const totalBatches = Math.ceil(validStandards.length / BATCH_SIZE);
@@ -426,6 +437,7 @@
                 setLoading(true);
                 setError('');
                 setBehaviorResults([]); 
+                setCopiedSet(new Set()); // 초기화
 
                 const allStudents = students.map(s => {
                     const traits = [];
@@ -509,6 +521,7 @@
                 setProgressMsg('문장을 생성하고 있습니다...');
                 setError('');
                 setCreativeResults(null);
+                setCopiedSet(new Set()); // 초기화
 
                 try {
                     const prompt = `
@@ -607,6 +620,11 @@
                         >
                             창체 생성기
                         </button>
+                    </div>
+
+                    {/* Toast Notification */}
+                    <div className={`toast-notification ${toast.show ? 'show' : 'hide'}`}>
+                        <span>✅</span> {toast.msg}
                     </div>
 
                     {/* ERROR Display */}
@@ -714,12 +732,22 @@
                                                         </span>
                                                     </div>
                                                     <ul className="p-3 space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
-                                                        {commentResults[activeTab]?.levels?.[sec.k]?.map((s, idx) => (
-                                                            <li key={idx} onClick={() => copyToClipboard(s)} className="text-sm p-2 hover:bg-gray-50 rounded cursor-pointer group flex">
-                                                                <span className="flex-1 text-gray-700">{s}</span>
-                                                                <span className="hidden group-hover:block text-xs text-gray-400 ml-1">복사</span>
-                                                            </li>
-                                                        )) || <li className="text-sm text-gray-400 p-2">생성된 문장이 없습니다.</li>}
+                                                        {commentResults[activeTab]?.levels?.[sec.k]?.map((s, idx) => {
+                                                            // ID for tracking copy state: c-{activeTab}-{sec.k}-{idx}
+                                                            // Need to use a stable ID if possible, but re-render might reset
+                                                            // Using composite key
+                                                            const copyId = `c-${activeTab}-${sec.k}-${idx}`;
+                                                            const isCopied = copiedSet.has(copyId);
+                                                            return (
+                                                                <li key={idx} 
+                                                                    onClick={() => handleCopy(s, copyId)} 
+                                                                    className={`text-sm p-2 hover:bg-gray-50 rounded cursor-pointer group flex transition-colors duration-200 ${isCopied ? 'text-rose-600 font-semibold' : 'text-gray-700'}`}
+                                                                >
+                                                                    <span className="flex-1">{s}</span>
+                                                                    <span className="hidden group-hover:block text-xs text-gray-400 ml-1">{isCopied ? '복사됨' : '복사'}</span>
+                                                                </li>
+                                                            );
+                                                        }) || <li className="text-sm text-gray-400 p-2">생성된 문장이 없습니다.</li>}
                                                     </ul>
                                                 </div>
                                             ))}
@@ -867,24 +895,31 @@
                             {/* Behavior Results */}
                             {behaviorResults && (
                                 <div className="mt-8 grid gap-6">
-                                    {behaviorResults.map((res, i) => (
-                                        <div key={i} className="bg-white shadow rounded-lg border border-gray-200 overflow-hidden">
-                                            <div className="bg-green-50 px-4 py-3 border-b border-green-100 flex justify-between items-center">
-                                                <span className="font-bold text-green-900">
-                                                    {res.name || `학생 ${res.id}`} 
-                                                    <span className="text-xs font-normal text-green-700 ml-2">
-                                                        (약 {calculateBytes(res.result)} Bytes)
+                                    {behaviorResults.map((res, i) => {
+                                        const copyId = `b-${i}`;
+                                        const isCopied = copiedSet.has(copyId);
+                                        return (
+                                            <div key={i} className="bg-white shadow rounded-lg border border-gray-200 overflow-hidden">
+                                                <div className="bg-green-50 px-4 py-3 border-b border-green-100 flex justify-between items-center">
+                                                    <span className="font-bold text-green-900">
+                                                        {res.name || `학생 ${res.id}`} 
+                                                        <span className="text-xs font-normal text-green-700 ml-2">
+                                                            (약 {calculateBytes(res.result)} Bytes)
+                                                        </span>
                                                     </span>
-                                                </span>
-                                                <button onClick={() => copyToClipboard(res.result)} className="text-xs bg-white border border-green-200 px-2 py-1 rounded text-green-700 hover:bg-green-100">
-                                                    복사
-                                                </button>
+                                                    <button 
+                                                        onClick={() => handleCopy(res.result, copyId)} 
+                                                        className={`text-xs border px-2 py-1 rounded transition-colors duration-200 ${isCopied ? 'bg-rose-100 text-rose-600 border-rose-200 font-bold' : 'bg-white text-green-700 border-green-200 hover:bg-green-100'}`}
+                                                    >
+                                                        {isCopied ? '복사됨' : '복사'}
+                                                    </button>
+                                                </div>
+                                                <div className={`p-4 text-sm leading-relaxed whitespace-pre-wrap ${isCopied ? 'text-rose-600 font-medium' : 'text-gray-700'}`}>
+                                                    {res.result}
+                                                </div>
                                             </div>
-                                            <div className="p-4 text-gray-700 text-sm leading-relaxed whitespace-pre-wrap">
-                                                {res.result}
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
@@ -961,12 +996,19 @@
                                             <div className="p-4">
                                                 <h4 className="font-bold text-gray-800 text-sm mb-3">✨ 생성된 변형 문장 ({item.variations.length}개)</h4>
                                                 <ul className="space-y-2">
-                                                    {item.variations.map((sent, sIdx) => (
-                                                        <li key={sIdx} onClick={() => copyToClipboard(sent)} className="text-sm p-3 bg-gray-50 hover:bg-purple-50 rounded border border-gray-100 cursor-pointer group flex transition">
-                                                            <span className="flex-1 text-gray-700">{sent}</span>
-                                                            <span className="hidden group-hover:block text-xs text-purple-400 ml-2 font-medium">복사</span>
-                                                        </li>
-                                                    ))}
+                                                    {item.variations.map((sent, sIdx) => {
+                                                        const copyId = `cr-${idx}-${sIdx}`;
+                                                        const isCopied = copiedSet.has(copyId);
+                                                        return (
+                                                            <li key={sIdx} 
+                                                                onClick={() => handleCopy(sent, copyId)} 
+                                                                className={`text-sm p-3 bg-gray-50 hover:bg-purple-50 rounded border border-gray-100 cursor-pointer group flex transition-colors duration-200 ${isCopied ? 'text-rose-600 font-semibold' : 'text-gray-700'}`}
+                                                            >
+                                                                <span className="flex-1">{sent}</span>
+                                                                <span className="hidden group-hover:block text-xs text-gray-400 ml-2 font-medium">{isCopied ? '복사됨' : '복사'}</span>
+                                                            </li>
+                                                        );
+                                                    })}
                                                 </ul>
                                             </div>
                                         </div>
