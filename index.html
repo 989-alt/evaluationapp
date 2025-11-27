@@ -149,7 +149,6 @@
             const [creativeResults, setCreativeResults] = useState(null);
 
             // --- Helpers ---
-            // 강제 딜레이 함수 (Rate Limit 방어)
             const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
             const showToast = (message) => {
@@ -308,66 +307,78 @@
                 }
             };
 
-            // --- API Call Functions ---
-            const callGemini = async (prompt) => {
+            // --- API Call Functions with Auto-Retry ---
+            const callGemini = async (prompt, retryCount = 0) => {
                 if (!apiKey) throw new Error('API 키를 입력해주세요.');
                 
                 const cleanModelName = model.startsWith('models/') ? model.split('/')[1] : model;
                 
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${cleanModelName}:generateContent?key=${apiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: prompt }] }],
-                        safetySettings: [
-                            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-                        ],
-                        generationConfig: {
-                            temperature: 0.8,
-                            maxOutputTokens: 8192,
-                            responseMimeType: "application/json"
-                        }
-                    })
-                });
-
-                if (!response.ok) {
-                    const errData = await response.json().catch(() => ({}));
-                    // Rate Limit 에러(429)일 경우 친절한 메시지
-                    if (response.status === 429) {
-                        throw new Error("⚠️ 사용량 제한 초과 (Rate Limit)\n잠시만 기다렸다가(1분 후) 다시 시도해주세요.\n(무료 계정은 분당 요청 횟수가 제한되어 있습니다.)");
-                    }
-                    throw new Error(errData.error?.message || `서버 오류 (${response.status})`);
-                }
-
-                const data = await response.json();
-                
-                if (!data.candidates || data.candidates.length === 0) {
-                    throw new Error('AI 응답 데이터가 없습니다.');
-                }
-
-                const candidate = data.candidates[0];
-                if (candidate.finishReason === 'SAFETY') {
-                    throw new Error('생성된 내용이 안전 정책에 의해 차단되었습니다.');
-                }
-
-                const rawText = candidate.content?.parts?.[0]?.text;
-                if (!rawText) {
-                    throw new Error(`AI 응답이 비어있습니다. (FinishReason: ${candidate.finishReason})`);
-                }
-
                 try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${cleanModelName}:generateContent?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            safetySettings: [
+                                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                            ],
+                            generationConfig: {
+                                temperature: 0.8,
+                                maxOutputTokens: 8192,
+                                responseMimeType: "application/json"
+                            }
+                        })
+                    });
+
+                    // 429 에러 처리 (Auto Retry)
+                    if (response.status === 429) {
+                        if (retryCount < 3) { // 최대 3번 재시도
+                            const waitTime = 10000 + (retryCount * 2000); // 10초, 12초, 14초 대기
+                            setProgressMsg(`⚠️ 사용량 제한 도달! ${waitTime/1000}초 대기 후 자동으로 재시도합니다... (${retryCount+1}/3)`);
+                            await delay(waitTime);
+                            return callGemini(prompt, retryCount + 1);
+                        } else {
+                            throw new Error("❌ 사용량 제한(Rate Limit)으로 인해 생성을 중단했습니다.\n1~2분 뒤에 다시 시도해주세요.");
+                        }
+                    }
+
+                    if (!response.ok) {
+                        const errData = await response.json().catch(() => ({}));
+                        throw new Error(errData.error?.message || `서버 오류 (${response.status})`);
+                    }
+
+                    const data = await response.json();
+                    
+                    if (!data.candidates || data.candidates.length === 0) {
+                        throw new Error('AI 응답 데이터가 없습니다.');
+                    }
+
+                    const candidate = data.candidates[0];
+                    if (candidate.finishReason === 'SAFETY') {
+                        throw new Error('생성된 내용이 안전 정책에 의해 차단되었습니다.');
+                    }
+
+                    const rawText = candidate.content?.parts?.[0]?.text;
+                    if (!rawText) {
+                        throw new Error(`AI 응답이 비어있습니다. (FinishReason: ${candidate.finishReason})`);
+                    }
+
                     const cleanedText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
                     return JSON.parse(cleanedText);
+
                 } catch (e) {
-                    console.error("JSON Parsing Failed", rawText);
-                    throw new Error(`AI 응답을 처리할 수 없습니다. JSON 형식이 아닙니다.`);
+                    // 재귀 호출에서 던져진 에러는 그대로 전파
+                    if (e.message.includes("사용량 제한")) throw e;
+                    
+                    console.error("JSON Parsing Failed", e);
+                    throw new Error(`오류 발생: ${e.message}`);
                 }
             };
 
-            // 1. 평어 생성 함수 (Batch Processing)
+            // 1. 평어 생성 함수 (Batch Processing + Safe Delay)
             const generateComments = async () => {
                 const validStandards = standards.filter(s => s.trim() !== '');
                 if (validStandards.length === 0) {
@@ -379,6 +390,7 @@
                 setCommentResults([]); 
                 setCopiedSet(new Set());
 
+                // Batch Size 3 (Safe)
                 const BATCH_SIZE = 3;
                 const totalBatches = Math.ceil(validStandards.length / BATCH_SIZE);
                 let accumulatedResults = [];
@@ -391,8 +403,8 @@
 
                         setProgressMsg(`성취 기준 ${start + 1}~${Math.min(end, validStandards.length)}개 처리 중... (${i+1}/${totalBatches})`);
 
-                        // 2번째 배치부터는 강제 대기 (2초) - Rate Limit 방지
-                        if (i > 0) await delay(2000);
+                        // 4초 대기 (15 RPM 방어용)
+                        if (i > 0) await delay(4000);
 
                         const prompt = `
                             당신은 교사의 평가 업무를 돕는 AI 보조 도구입니다. 
@@ -439,7 +451,7 @@
                 }
             };
 
-            // 2. 행발 생성 함수 (Batch Processing)
+            // 2. 행발 생성 함수 (Batch Processing + Safe Delay)
             const generateBehavior = async () => {
                 setLoading(true);
                 setError('');
@@ -476,8 +488,8 @@
 
                         setProgressMsg(`전체 ${allStudents.length}명 중 ${start + 1}~${Math.min(end, allStudents.length)}명 생성 중... (${i+1}/${totalBatches})`);
 
-                        // 2번째 배치부터는 강제 대기 (2초)
-                        if (i > 0) await delay(2000);
+                        // 4초 대기 (15 RPM 방어용)
+                        if (i > 0) await delay(4000);
 
                         const prompt = `
                             당신은 담임 교사로서 학생의 "행동특성 및 종합의견(행발)"을 작성해야 합니다.
@@ -533,7 +545,6 @@
                 setCreativeResults(null);
                 setCopiedSet(new Set());
 
-                // 창체는 보통 양이 적으므로 1번의 요청으로 충분하나, 안전을 위해 delay는 없음 (단발성)
                 try {
                     const prompt = `
                         당신은 교사의 학교생활기록부 작성을 돕는 AI입니다.
@@ -805,7 +816,7 @@
                                 {students.map((student, sIdx) => (
                                     <div key={student.id} className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
                                         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-3">
-                                            <span className="font-bold text-gray-600 w-12">No.{student.id}</span>
+                                            <span className="font-bold text-green-900">No.{student.id}</span>
                                             <input 
                                                 type="text" 
                                                 placeholder="학생 이름 (선택)" 
