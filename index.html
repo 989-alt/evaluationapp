@@ -149,6 +149,9 @@
             const [creativeResults, setCreativeResults] = useState(null);
 
             // --- Helpers ---
+            // 강제 딜레이 함수 (Rate Limit 방어)
+            const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
             const showToast = (message) => {
                 setToast({ show: true, msg: message });
                 setTimeout(() => {
@@ -165,7 +168,6 @@
                 document.body.removeChild(textarea);
                 showToast('📋 클립보드에 복사되었습니다!');
                 
-                // 복사된 항목 상태 업데이트
                 setCopiedSet(prev => {
                     const newSet = new Set(prev);
                     newSet.add(id);
@@ -333,7 +335,11 @@
 
                 if (!response.ok) {
                     const errData = await response.json().catch(() => ({}));
-                    throw new Error(errData.error?.message || `서버 오류 (${response.status}) - 모델명이나 API 키를 확인해주세요.`);
+                    // Rate Limit 에러(429)일 경우 친절한 메시지
+                    if (response.status === 429) {
+                        throw new Error("⚠️ 사용량 제한 초과 (Rate Limit)\n잠시만 기다렸다가(1분 후) 다시 시도해주세요.\n(무료 계정은 분당 요청 횟수가 제한되어 있습니다.)");
+                    }
+                    throw new Error(errData.error?.message || `서버 오류 (${response.status})`);
                 }
 
                 const data = await response.json();
@@ -361,7 +367,7 @@
                 }
             };
 
-            // 1. 평어 생성 함수 (Batch Processing 적용 - 3개씩)
+            // 1. 평어 생성 함수 (Batch Processing)
             const generateComments = async () => {
                 const validStandards = standards.filter(s => s.trim() !== '');
                 if (validStandards.length === 0) {
@@ -371,7 +377,7 @@
                 setLoading(true);
                 setError('');
                 setCommentResults([]); 
-                setCopiedSet(new Set()); // 초기화
+                setCopiedSet(new Set());
 
                 const BATCH_SIZE = 3;
                 const totalBatches = Math.ceil(validStandards.length / BATCH_SIZE);
@@ -384,6 +390,9 @@
                         const batch = validStandards.slice(start, end);
 
                         setProgressMsg(`성취 기준 ${start + 1}~${Math.min(end, validStandards.length)}개 처리 중... (${i+1}/${totalBatches})`);
+
+                        // 2번째 배치부터는 강제 대기 (2초) - Rate Limit 방지
+                        if (i > 0) await delay(2000);
 
                         const prompt = `
                             당신은 교사의 평가 업무를 돕는 AI 보조 도구입니다. 
@@ -421,9 +430,7 @@
                         }
                     }
                     
-                    if (accumulatedResults.length > 0) {
-                        setActiveTab(0);
-                    }
+                    if (accumulatedResults.length > 0) setActiveTab(0);
                 } catch (err) {
                     setError(err.message);
                 } finally {
@@ -437,7 +444,7 @@
                 setLoading(true);
                 setError('');
                 setBehaviorResults([]); 
-                setCopiedSet(new Set()); // 초기화
+                setCopiedSet(new Set());
 
                 const allStudents = students.map(s => {
                     const traits = [];
@@ -468,6 +475,9 @@
                         const batch = allStudents.slice(start, end);
 
                         setProgressMsg(`전체 ${allStudents.length}명 중 ${start + 1}~${Math.min(end, allStudents.length)}명 생성 중... (${i+1}/${totalBatches})`);
+
+                        // 2번째 배치부터는 강제 대기 (2초)
+                        if (i > 0) await delay(2000);
 
                         const prompt = `
                             당신은 담임 교사로서 학생의 "행동특성 및 종합의견(행발)"을 작성해야 합니다.
@@ -521,8 +531,9 @@
                 setProgressMsg('문장을 생성하고 있습니다...');
                 setError('');
                 setCreativeResults(null);
-                setCopiedSet(new Set()); // 초기화
+                setCopiedSet(new Set());
 
+                // 창체는 보통 양이 적으므로 1번의 요청으로 충분하나, 안전을 위해 delay는 없음 (단발성)
                 try {
                     const prompt = `
                         당신은 교사의 학교생활기록부 작성을 돕는 AI입니다.
@@ -733,9 +744,6 @@
                                                     </div>
                                                     <ul className="p-3 space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
                                                         {commentResults[activeTab]?.levels?.[sec.k]?.map((s, idx) => {
-                                                            // ID for tracking copy state: c-{activeTab}-{sec.k}-{idx}
-                                                            // Need to use a stable ID if possible, but re-render might reset
-                                                            // Using composite key
                                                             const copyId = `c-${activeTab}-${sec.k}-${idx}`;
                                                             const isCopied = copiedSet.has(copyId);
                                                             return (
@@ -1005,7 +1013,7 @@
                                                                 className={`text-sm p-3 bg-gray-50 hover:bg-purple-50 rounded border border-gray-100 cursor-pointer group flex transition-colors duration-200 ${isCopied ? 'text-rose-600 font-semibold' : 'text-gray-700'}`}
                                                             >
                                                                 <span className="flex-1">{sent}</span>
-                                                                <span className="hidden group-hover:block text-xs text-gray-400 ml-2 font-medium">{isCopied ? '복사됨' : '복사'}</span>
+                                                                <span className="hidden group-hover:block text-xs text-purple-400 ml-2 font-medium">{isCopied ? '복사됨' : '복사'}</span>
                                                             </li>
                                                         );
                                                     })}
