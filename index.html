@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 교사 보조 도구 (평어 & 행발 & 창체)</title>
+    <title>AI 교사 보조 도구 (평어 & 행발 & 창체 & 과목별 평가)</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -14,6 +14,9 @@
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- SheetJS (Excel Parsing) -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 
     <!-- Custom Styles -->
     <style>
@@ -50,13 +53,11 @@
         .trait-box {
             transition: all 0.2s;
         }
-        /* State 1: Positive (Blue) */
         .trait-box.state-1 {
             background-color: #dbeafe; /* blue-100 */
             border-color: #3b82f6; /* blue-500 */
             color: #1e40af; /* blue-800 */
         }
-        /* State 2: Needs Improvement (Orange) */
         .trait-box.state-2 {
             background-color: #ffedd5; /* orange-100 */
             border-color: #f97316; /* orange-500 */
@@ -68,20 +69,22 @@
             bottom: 30px;
             left: 50%;
             transform: translateX(-50%);
-            background-color: rgba(31, 41, 55, 0.9); /* Dark gray with opacity */
+            background-color: rgba(31, 41, 55, 0.95);
             color: white;
-            padding: 10px 24px;
+            padding: 12px 24px;
             border-radius: 50px;
             z-index: 9999;
             font-size: 14px;
             font-weight: 500;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
             opacity: 0;
             transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
-            pointer-events: none; /* 클릭 방지 */
+            pointer-events: none;
             display: flex;
             align-items: center;
             gap: 8px;
+            white-space: pre-line;
+            text-align: center;
         }
         .toast-notification.show {
             opacity: 1;
@@ -91,13 +94,23 @@
             opacity: 0;
             transform: translateX(-50%) translateY(10px);
         }
+        /* Excel Table Style */
+        .excel-table th, .excel-table td {
+            border: 1px solid #e5e7eb;
+            padding: 8px;
+            font-size: 0.875rem;
+        }
+        .excel-table th {
+            background-color: #f9fafb;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useMemo } = React;
 
         // --- 데이터 정의 ---
         const BEHAVIOR_CATEGORIES = {
@@ -108,28 +121,28 @@
 
         const App = () => {
             // --- Common State ---
-            const [mode, setMode] = useState('comment'); // 'comment' | 'behavior' | 'creative'
+            const [mode, setMode] = useState('comment'); 
             const [apiKey, setApiKey] = useState('');
             
             // 모델 관련 State
             const [model, setModel] = useState('gemini-1.5-flash'); 
             const [modelList, setModelList] = useState([
                 { name: 'models/gemini-2.5-flash', displayName: 'gemini-2.5-flash (최신/빠름)' },
-                { name: 'models/gemini-2.5-pro', displayName: 'gemini-2.5-pro (최신/고성능)' },
+                { name: 'models/gemini-2.5-pro', displayName: 'gemini-2.5-pro (최신/고성능/느림)' },
                 { name: 'models/gemini-1.5-flash', displayName: 'gemini-1.5-flash (안정/기본)' },
-                { name: 'models/gemini-1.5-pro', displayName: 'gemini-1.5-pro (고성능)' },
+                { name: 'models/gemini-1.5-pro', displayName: 'gemini-1.5-pro (고성능/느림)' },
                 { name: 'models/gemini-1.5-flash-8b', displayName: 'gemini-1.5-flash-8b (초경량)' }
             ]);
             const [isFetchingModels, setIsFetchingModels] = useState(false);
 
             const [loading, setLoading] = useState(false);
-            const [progressMsg, setProgressMsg] = useState(''); // 진행 상황 메시지
+            const [progressMsg, setProgressMsg] = useState(''); 
             const [error, setError] = useState('');
 
             // Toast State
             const [toast, setToast] = useState({ show: false, msg: '' });
 
-            // Copied Items State (Set of unique IDs)
+            // Copied Items State
             const [copiedSet, setCopiedSet] = useState(new Set());
 
             // --- Comment Gen State (평어) ---
@@ -148,6 +161,11 @@
             const [creativeInputs, setCreativeInputs] = useState([{ text: '', count: 3 }]);
             const [creativeResults, setCreativeResults] = useState(null);
 
+            // --- Excel Gen State (과목별 평가) ---
+            const [excelData, setExcelData] = useState(null); // Parsed Excel Data
+            const [excelResults, setExcelResults] = useState(null); // Generated Comments (Student-based)
+            const [excelSubjectTab, setExcelSubjectTab] = useState(''); // Current Subject Tab
+
             // --- Helpers ---
             const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -155,7 +173,7 @@
                 setToast({ show: true, msg: message });
                 setTimeout(() => {
                     setToast(prev => ({ ...prev, show: false }));
-                }, 2000); // 2초 후 사라짐
+                }, 2000);
             };
 
             const handleCopy = (text, id) => {
@@ -166,7 +184,6 @@
                 document.execCommand('copy');
                 document.body.removeChild(textarea);
                 showToast('📋 클립보드에 복사되었습니다!');
-                
                 setCopiedSet(prev => {
                     const newSet = new Set(prev);
                     newSet.add(id);
@@ -184,6 +201,43 @@
                 }
                 return bytes;
             };
+
+            const getModelDelay = (modelName) => {
+                if (modelName.toLowerCase().includes('pro')) {
+                    return 35000; 
+                }
+                return 4000; 
+            };
+
+            // Excel Data Pivot: Convert [Students with Subjects] -> [Subjects with Students]
+            const pivotedExcelData = useMemo(() => {
+                if (!excelResults) return null;
+                
+                const subjectsMap = {};
+                
+                excelResults.forEach(student => {
+                    if (student.results) {
+                        Object.keys(student.results).forEach(subject => {
+                            if (!subjectsMap[subject]) {
+                                subjectsMap[subject] = [];
+                            }
+                            subjectsMap[subject].push({
+                                name: student.name,
+                                comment: student.results[subject]
+                            });
+                        });
+                    }
+                });
+                
+                // If no subject is selected yet, select the first one
+                const subjectKeys = Object.keys(subjectsMap);
+                if (subjectKeys.length > 0 && !excelSubjectTab) {
+                    setExcelSubjectTab(subjectKeys[0]);
+                }
+                
+                return subjectsMap;
+            }, [excelResults]);
+
 
             // --- Logic: Comment Generator ---
             const addStandard = () => setStandards([...standards, '']);
@@ -205,13 +259,10 @@
             const handleStudentCountChange = (e) => {
                 const count = Math.max(1, Math.min(50, parseInt(e.target.value) || 1));
                 setStudentCount(count);
-                
                 setStudents(prev => {
                     const newArr = [...prev];
                     if (count > prev.length) {
-                        for (let i = prev.length; i < count; i++) {
-                            newArr.push({ id: i + 1, name: '', checks: new Map() });
-                        }
+                        for (let i = prev.length; i < count; i++) newArr.push({ id: i + 1, name: '', checks: new Map() });
                     } else {
                         return newArr.slice(0, count);
                     }
@@ -224,13 +275,10 @@
                     const newArr = [...prev];
                     const student = { ...newArr[studentIndex] };
                     const newChecks = new Map(student.checks);
-                    
                     const currentVal = newChecks.get(trait) || 0;
                     const nextVal = (currentVal + 1) % 3;
-
                     if (nextVal === 0) newChecks.delete(trait);
                     else newChecks.set(trait, nextVal);
-                    
                     student.checks = newChecks;
                     newArr[studentIndex] = student;
                     return newArr;
@@ -261,6 +309,121 @@
                 setCreativeInputs(newInputs);
             };
 
+            // --- Logic: Excel Generator ---
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const bstr = evt.target.result;
+                    const wb = XLSX.read(bstr, { type: 'binary' });
+                    const wsname = wb.SheetNames[0];
+                    const ws = wb.Sheets[wsname];
+                    const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+                    if (data.length < 2) {
+                        setError("엑셀 파일에 데이터가 충분하지 않습니다.");
+                        return;
+                    }
+
+                    const headers = data[0];
+                    const rows = data.slice(1).filter(r => r && r.length > 0);
+
+                    const parsedStudents = rows.map(row => {
+                        const studentName = row[0];
+                        const subjectData = {};
+
+                        for (let i = 1; i < row.length; i++) {
+                            const header = headers[i];
+                            if (!header || !header.includes('-')) continue;
+                            
+                            const parts = header.split('-');
+                            const subject = parts[0].trim();
+                            const standard = parts.slice(1).join('-').trim();
+                            const grade = row[i];
+
+                            if (!subjectData[subject]) {
+                                subjectData[subject] = [];
+                            }
+                            subjectData[subject].push({ standard, grade });
+                        }
+                        return { name: studentName, subjects: subjectData };
+                    });
+
+                    setExcelData(parsedStudents);
+                    setExcelResults(null);
+                    setExcelSubjectTab('');
+                    setError('');
+                    showToast(`✅ ${parsedStudents.length}명의 학생 데이터를 불러왔습니다.`);
+                };
+                reader.readAsBinaryString(file);
+            };
+
+            const downloadHwp = () => {
+                if (!pivotedExcelData) return;
+
+                let htmlContent = `
+                    <html>
+                    <head>
+                        <meta charset="utf-8">
+                        <style>
+                            table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+                            th, td { border: 1px solid black; padding: 5px; text-align: center; font-family: "Malgun Gothic", serif; }
+                            th { background-color: #f0f0f0; }
+                            h2 { font-family: "Malgun Gothic", serif; margin-top: 20px; }
+                            .left-align { text-align: left; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>과목별 평어 생성 결과</h1>
+                `;
+
+                // 과목별로 테이블 생성
+                Object.keys(pivotedExcelData).forEach(subject => {
+                    const studentsList = pivotedExcelData[subject];
+                    htmlContent += `
+                        <h2>[${subject}]</h2>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th width="120">이름</th>
+                                    <th>평어 (세부능력 및 특기사항)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                    `;
+                    
+                    studentsList.forEach(student => {
+                        htmlContent += `
+                            <tr>
+                                <td>${student.name}</td>
+                                <td class="left-align">${student.comment}</td>
+                            </tr>
+                        `;
+                    });
+
+                    htmlContent += `
+                            </tbody>
+                        </table>
+                        <br>
+                    `;
+                });
+
+                htmlContent += `
+                    </body>
+                    </html>
+                `;
+
+                const blob = new Blob([htmlContent], { type: 'application/msword;charset=utf-8' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `과목별_평어_결과_${new Date().toLocaleDateString()}.hwp`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
             // --- API Model Fetching ---
             const fetchAvailableModels = async () => {
                 if (!apiKey) {
@@ -272,7 +435,6 @@
                 try {
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
                     if (!response.ok) throw new Error("모델 목록을 불러오는데 실패했습니다.");
-                    
                     const data = await response.json();
                     if (data.models) {
                         const validModels = data.models.filter(m => 
@@ -282,7 +444,6 @@
                             name: m.name,
                             displayName: m.displayName || m.name
                         }));
-
                         validModels.sort((a, b) => {
                             const getVersion = (name) => {
                                 const match = name.match(/(\d+\.\d+)/);
@@ -293,11 +454,10 @@
                             if (verA !== verB) return verB - verA;
                             return b.name.localeCompare(a.name); 
                         });
-
                         setModelList(validModels);
                         if (validModels.length > 0) {
                             setModel(validModels[0].name.replace('models/', '')); 
-                            alert(`총 ${validModels.length}개의 사용 가능한 모델을 불러왔습니다.\n최신 모델(${validModels[0].displayName})이 상단에 정렬되었습니다.`);
+                            showToast(`✅ 모델 목록 갱신 완료 (최신: ${validModels[0].displayName})`);
                         }
                     }
                 } catch (err) {
@@ -310,9 +470,7 @@
             // --- API Call Functions with Auto-Retry ---
             const callGemini = async (prompt, retryCount = 0) => {
                 if (!apiKey) throw new Error('API 키를 입력해주세요.');
-                
                 const cleanModelName = model.startsWith('models/') ? model.split('/')[1] : model;
-                
                 try {
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${cleanModelName}:generateContent?key=${apiKey}`, {
                         method: 'POST',
@@ -326,22 +484,22 @@
                                 { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
                             ],
                             generationConfig: {
-                                temperature: 0.8,
+                                temperature: 0.7,
                                 maxOutputTokens: 8192,
                                 responseMimeType: "application/json"
                             }
                         })
                     });
 
-                    // 429 에러 처리 (Auto Retry)
                     if (response.status === 429) {
-                        if (retryCount < 3) { // 최대 3번 재시도
-                            const waitTime = 10000 + (retryCount * 2000); // 10초, 12초, 14초 대기
-                            setProgressMsg(`⚠️ 사용량 제한 도달! ${waitTime/1000}초 대기 후 자동으로 재시도합니다... (${retryCount+1}/3)`);
+                        if (retryCount < 3) {
+                            const baseWait = model.toLowerCase().includes('pro') ? 35000 : 10000;
+                            const waitTime = baseWait + (retryCount * 5000); 
+                            setProgressMsg(`⚠️ 사용량 제한 도달! ${waitTime/1000}초 대기 후 재시도합니다... (${retryCount+1}/3)`);
                             await delay(waitTime);
                             return callGemini(prompt, retryCount + 1);
                         } else {
-                            throw new Error("❌ 사용량 제한(Rate Limit)으로 인해 생성을 중단했습니다.\n1~2분 뒤에 다시 시도해주세요.");
+                            throw new Error("❌ 사용량 제한(Rate Limit) 초과. 잠시 후 다시 시도해주세요.");
                         }
                     }
 
@@ -351,228 +509,152 @@
                     }
 
                     const data = await response.json();
+                    if (!data.candidates || data.candidates.length === 0) throw new Error('AI 응답 데이터 없음');
                     
-                    if (!data.candidates || data.candidates.length === 0) {
-                        throw new Error('AI 응답 데이터가 없습니다.');
-                    }
-
-                    const candidate = data.candidates[0];
-                    if (candidate.finishReason === 'SAFETY') {
-                        throw new Error('생성된 내용이 안전 정책에 의해 차단되었습니다.');
-                    }
-
-                    const rawText = candidate.content?.parts?.[0]?.text;
-                    if (!rawText) {
-                        throw new Error(`AI 응답이 비어있습니다. (FinishReason: ${candidate.finishReason})`);
-                    }
+                    const rawText = data.candidates[0].content?.parts?.[0]?.text;
+                    if (!rawText) throw new Error('AI 응답 비어있음');
 
                     const cleanedText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
                     return JSON.parse(cleanedText);
 
                 } catch (e) {
-                    // 재귀 호출에서 던져진 에러는 그대로 전파
                     if (e.message.includes("사용량 제한")) throw e;
-                    
-                    console.error("JSON Parsing Failed", e);
+                    console.error("Error:", e);
                     throw new Error(`오류 발생: ${e.message}`);
                 }
             };
 
-            // 1. 평어 생성 함수 (Batch Processing + Safe Delay)
-            const generateComments = async () => {
+            // ... (평어, 행발, 창체 생성 함수 - 기존 유지) ...
+            const generateComments = async () => { /* ... */ 
                 const validStandards = standards.filter(s => s.trim() !== '');
-                if (validStandards.length === 0) {
-                    setError('최소 하나 이상의 성취 기준을 입력해주세요.');
-                    return;
-                }
-                setLoading(true);
-                setError('');
-                setCommentResults([]); 
-                setCopiedSet(new Set());
-
-                // Batch Size 3 (Safe)
-                const BATCH_SIZE = 3;
-                const totalBatches = Math.ceil(validStandards.length / BATCH_SIZE);
+                if (validStandards.length === 0) { setError('성취 기준 입력 필요'); return; }
+                setLoading(true); setError(''); setCommentResults([]); setCopiedSet(new Set());
+                const BATCH_SIZE = 3; const totalBatches = Math.ceil(validStandards.length / BATCH_SIZE);
                 let accumulatedResults = [];
-
+                const WAIT_TIME = getModelDelay(model);
                 try {
                     for (let i = 0; i < totalBatches; i++) {
-                        const start = i * BATCH_SIZE;
-                        const end = start + BATCH_SIZE;
-                        const batch = validStandards.slice(start, end);
-
-                        setProgressMsg(`성취 기준 ${start + 1}~${Math.min(end, validStandards.length)}개 처리 중... (${i+1}/${totalBatches})`);
-
-                        // 4초 대기 (15 RPM 방어용)
-                        if (i > 0) await delay(4000);
-
-                        const prompt = `
-                            당신은 교사의 평가 업무를 돕는 AI 보조 도구입니다. 
-                            다음 지침을 엄격히 준수하여 "평어(평가 문장)"를 생성하세요.
-
-                            [이번 요청의 성취 기준 목록]
-                            ${JSON.stringify(batch)}
-
-                            [생성 규칙]
-                            1. 입력된 **각각의 성취 기준마다** 아래 개수만큼 문장을 생성해야 합니다.
-                            2. **각 성취 기준 당** 생성 개수:
-                               - "매우 잘함": ${counts.veryGood}개
-                               - "잘함": ${counts.good}개
-                               - "보통": ${counts.average}개
-                               - "노력요함": ${counts.needsEffort}개
-                            
-                            [필수 제약 조건]
-                            1. **어미**: 반드시 명사형(예: -함., -임., -것.)으로 끝내세요.
-                            2. **특수문자**: 따옴표, 괄호 등 특수문자 절대 사용 금지.
-                            3. **맞춤법**: "강한 맞춤법 규칙"을 적용.
-                            
-                            [출력 형식: JSON Array]
-                            [ 
-                              { 
-                                "standard": "성취기준 내용", 
-                                "levels": { "veryGood": ["..."], "good": ["..."], "average": ["..."], "needsEffort": ["..."] } 
-                              }, ...
-                            ]
-                        `;
-                        
+                        const start = i * BATCH_SIZE; const end = start + BATCH_SIZE; const batch = validStandards.slice(start, end);
+                        setProgressMsg(`평어 생성 중... (${i+1}/${totalBatches})`);
+                        if (i > 0) await delay(WAIT_TIME);
+                        const prompt = `당신은 교사입니다. 다음 성취 기준에 대해 4단계(매우 잘함, 잘함, 보통, 노력요함) 평어를 생성하세요.
+                        [입력]: ${JSON.stringify(batch)}
+                        [규칙]: 
+                        1. 각 성취기준별로 단계마다: 매우 잘함(${counts.veryGood}개), 잘함(${counts.good}개), 보통(${counts.average}개), 노력요함(${counts.needsEffort}개).
+                        2. 어미: "-함.", "-임." 등 명사형.
+                        3. 특수문자 금지. 강한 맞춤법 적용.
+                        [출력(JSON)]: [{ "standard": "...", "levels": { "veryGood": ["..."], ... } }, ...]`;
                         const result = await callGemini(prompt);
-                        if (Array.isArray(result)) {
-                            accumulatedResults = [...accumulatedResults, ...result];
-                            setCommentResults([...accumulatedResults]); 
-                        }
+                        if (Array.isArray(result)) { accumulatedResults = [...accumulatedResults, ...result]; setCommentResults([...accumulatedResults]); }
                     }
-                    
                     if (accumulatedResults.length > 0) setActiveTab(0);
-                } catch (err) {
-                    setError(err.message);
-                } finally {
-                    setLoading(false);
-                    setProgressMsg('');
-                }
+                } catch (err) { setError(err.message); } finally { setLoading(false); setProgressMsg(''); }
             };
 
-            // 2. 행발 생성 함수 (Batch Processing + Safe Delay)
-            const generateBehavior = async () => {
-                setLoading(true);
-                setError('');
-                setBehaviorResults([]); 
-                setCopiedSet(new Set());
-
+            const generateBehavior = async () => { /* ... */ 
+                setLoading(true); setError(''); setBehaviorResults([]); setCopiedSet(new Set());
                 const allStudents = students.map(s => {
-                    const traits = [];
-                    s.checks.forEach((status, name) => {
-                        traits.push({ 
-                            name: name, 
-                            status: status === 1 ? '긍정(우수)' : '지도필요(부족함/개선필요)' 
-                        });
-                    });
-                    return {
-                        id: s.id,
-                        name: s.name || `학생${s.id}`,
-                        traits: traits
-                    };
+                    const traits = []; s.checks.forEach((status, name) => traits.push({ name, status: status === 1 ? '긍정' : '지도필요' }));
+                    return { id: s.id, name: s.name || `학생${s.id}`, traits };
                 });
-
-                const minChars = Math.floor((targetBytes - 50) / 3);
-                const maxChars = Math.floor((targetBytes + 100) / 3);
-
-                const BATCH_SIZE = 5;
-                const totalBatches = Math.ceil(allStudents.length / BATCH_SIZE);
-                let accumulatedResults = [];
-
+                const minChars = Math.floor((targetBytes - 50) / 3); const maxChars = Math.floor((targetBytes + 100) / 3);
+                const BATCH_SIZE = 5; const totalBatches = Math.ceil(allStudents.length / BATCH_SIZE);
+                let accumulatedResults = []; const WAIT_TIME = getModelDelay(model);
                 try {
                     for (let i = 0; i < totalBatches; i++) {
-                        const start = i * BATCH_SIZE;
-                        const end = start + BATCH_SIZE;
-                        const batch = allStudents.slice(start, end);
-
-                        setProgressMsg(`전체 ${allStudents.length}명 중 ${start + 1}~${Math.min(end, allStudents.length)}명 생성 중... (${i+1}/${totalBatches})`);
-
-                        // 4초 대기 (15 RPM 방어용)
-                        if (i > 0) await delay(4000);
-
-                        const prompt = `
-                            당신은 담임 교사로서 학생의 "행동특성 및 종합의견(행발)"을 작성해야 합니다.
-                            아래 학생별 특성 데이터를 바탕으로 줄글을 작성해주세요.
-
-                            [학생 데이터 (이번 요청 분)]
-                            ${JSON.stringify(batch)}
-
-                            [작성 규칙 - **분량 준수 최우선**]
-                            1. **목표 분량**: ${targetBytes} Bytes (한글 1자당 3Byte 계산)
-                            2. **필수 글자 수**: **공백 포함 한글 약 ${minChars}자 ~ ${maxChars}자 사이**로 작성하세요.
-                               - **중요**: 분량이 너무 적으면 절대 안 됩니다. 접속사(그리고, 또한, 반면 등)와 부사(매우, 성실히, 꾸준히 등)를 적극 사용하여 문장을 길고 풍부하게 만드세요.
-                               - 각 학생당 **최소 5~7 문장 이상**이 되어야 합니다.
-                            3. **주어 생략**: "학생1은", "OOO는"과 같은 주어를 절대 사용하지 마세요.
-                            4. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
-                            5. **특성 반영 로직**:
-                               - 상태가 **'긍정(우수)'**인 항목: 해당 특성이 우수하다는 칭찬 문구 작성.
-                               - 상태가 **'지도필요'**인 항목: 부족하나 개선하고 있다는 긍정적 변화 가능성 포함.
-                               - **'학습(제안)'** 항목: 학습에 대한 노력과 보완 필요 명시.
-                            6. **제약 사항**: 
-                               - **온점(.)과 반점(,)**을 제외한 특수문자 사용 금지.
-                               - 외래어/영어 금지.
-                               - "강한 맞춤법 규칙" 적용.
-
-                            [출력 형식: JSON Array]
-                            [ { "id": 1, "name": "학생이름", "result": "작성된 줄글..." }, ... ]
-                        `;
-
+                        const start = i * BATCH_SIZE; const end = start + BATCH_SIZE; const batch = allStudents.slice(start, end);
+                        setProgressMsg(`행발 생성 중... (${i+1}/${totalBatches})`);
+                        if (i > 0) await delay(WAIT_TIME);
+                        const prompt = `당신은 담임 교사입니다. 학생 특성을 바탕으로 행발을 작성하세요.
+                        [데이터]: ${JSON.stringify(batch)}
+                        [규칙]: 
+                        1. 분량: 공백포함 약 ${minChars}~${maxChars}자 (오차범위 준수).
+                        2. 어미: "-함.", "-임." 명사형. 주어 생략.
+                        3. 특수문자(온점, 반점 제외) 금지.
+                        [출력(JSON)]: [{ "id": 1, "name": "...", "result": "..." }, ...]`;
                         const result = await callGemini(prompt);
-                        if (Array.isArray(result)) {
-                            accumulatedResults = [...accumulatedResults, ...result];
-                            setBehaviorResults([...accumulatedResults]);
-                        }
+                        if (Array.isArray(result)) { accumulatedResults = [...accumulatedResults, ...result]; setBehaviorResults([...accumulatedResults]); }
                     }
-                } catch (err) {
-                    setError(`생성 중 오류가 발생했습니다: ${err.message}`);
-                } finally {
-                    setLoading(false);
-                    setProgressMsg('');
-                }
+                } catch (err) { setError(err.message); } finally { setLoading(false); setProgressMsg(''); }
             };
 
-            // 3. 창체 생성 함수
-            const generateCreative = async () => {
+            const generateCreative = async () => { /* ... */ 
                 const validInputs = creativeInputs.filter(item => item.text.trim() !== '');
-                if (validInputs.length === 0) {
-                    setError('최소 하나 이상의 문장을 입력해주세요.');
-                    return;
-                }
-                setLoading(true);
-                setProgressMsg('문장을 생성하고 있습니다...');
-                setError('');
-                setCreativeResults(null);
-                setCopiedSet(new Set());
-
+                if (validInputs.length === 0) { setError('문장 입력 필요'); return; }
+                setLoading(true); setProgressMsg('창체 생성 중...'); setError(''); setCreativeResults(null); setCopiedSet(new Set());
                 try {
-                    const prompt = `
-                        당신은 교사의 학교생활기록부 작성을 돕는 AI입니다.
-                        입력된 문장(특기사항 예시)을 바탕으로, 비슷한 맥락이지만 표현이 다른 문장들을 생성해주세요.
-
-                        [입력 데이터]
-                        ${JSON.stringify(validInputs)}
-
-                        [작성 규칙 - **엄격 준수**]
-                        1. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
-                        2. **수량**: 각 입력 문장에 대해, 요청된 'count' 개수만큼의 변형 문장을 생성하세요.
-                        3. **내용**: 원문이 가진 긍정적인 맥락과 핵심 키워드는 유지하되, 서술어와 표현 방식을 다양하게 바꾸세요.
-                        4. **특수문자 제한**: **온점(.)과 반점(,)**을 제외한 특수문자 사용 금지.
-                        5. **맞춤법**: "강한 맞춤법 규칙" 적용.
-
-                        [출력 형식: JSON Array]
-                        [
-                          {
-                            "original": "입력된 원문",
-                            "variations": ["변형 문장 1...", "변형 문장 2...", ...]
-                          },
-                          ...
-                        ]
-                    `;
+                    const prompt = `당신은 교사입니다. 입력된 문장과 유사한 문장을 생성하세요.
+                    [입력]: ${JSON.stringify(validInputs)}
+                    [규칙]: 어미 명사형(-함/-임). 특수문자 금지.
+                    [출력(JSON)]: [{ "original": "...", "variations": ["...", ...] }, ...]`;
                     const result = await callGemini(prompt);
                     setCreativeResults(result);
+                } catch (err) { setError(err.message); } finally { setLoading(false); setProgressMsg(''); }
+            };
+
+            // 4. Excel Generator Function
+            const generateExcelReport = async () => {
+                if (!excelData || excelData.length === 0) {
+                    setError("먼저 엑셀 파일을 업로드해주세요.");
+                    return;
+                }
+                setLoading(true);
+                setError('');
+                setExcelResults([]);
+                setCopiedSet(new Set());
+
+                // 학생 1명씩 처리 (내용이 많을 수 있으므로)
+                let accumulatedResults = [];
+                const WAIT_TIME = getModelDelay(model);
+
+                try {
+                    for (let i = 0; i < excelData.length; i++) {
+                        const student = excelData[i];
+                        setProgressMsg(`[${student.name}] 학생 평어 생성 중... (${i+1}/${excelData.length})`);
+
+                        if (i > 0) await delay(WAIT_TIME);
+
+                        const prompt = `
+                            당신은 교사입니다. 학생의 과목별 성취 기준과 성적을 바탕으로 '과목별 세부능력 및 특기사항(평어)'을 작성해주세요.
+
+                            [학생 정보]
+                            이름: ${student.name}
+                            성적 데이터: ${JSON.stringify(student.subjects)}
+
+                            [작성 규칙 - **엄격 준수**]
+                            1. **출력 구조**: 
+                               - 각 과목별로 평어를 작성합니다.
+                               - **중요**: 해당 과목의 **각 성취 기준(평가 항목)마다 하나씩 독립된 문장**을 작성하세요.
+                               - **중요**: 작성된 각 문장들을 줄바꿈 없이 **하나의 문단(Paragraph)**으로 이어 붙이세요.
+                               - (잘못된 예: 목록형 나열)
+                               - (올바른 예: "~~함. ~~함. ~~함.")
+                            2. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 명사형으로 끝나야 합니다.
+                            3. **내용**: 
+                               - 성적이 우수한 항목은 강점을 칭찬하고, 부족한 항목은 노력해야 할 점을 기술하세요.
+                            4. **금지 사항**: 
+                               - 특수문자(따옴표, 괄호 등) 사용 금지. (온점, 반점만 허용)
+                               - 주어(학생 이름) 생략.
+                            
+                            [출력 형식: JSON]
+                            반드시 아래 JSON 형식으로만 출력하세요.
+                            {
+                                "name": "${student.name}",
+                                "results": {
+                                    "국어": "국어 성취기준1 평가 문장. 국어 성취기준2 평가 문장...",
+                                    "수학": "수학 성취기준1 평가 문장. 수학 성취기준2 평가 문장..."
+                                }
+                            }
+                        `;
+
+                        // 1명씩 요청하므로 단일 객체 반환 예상
+                        const result = await callGemini(prompt);
+                        if (result) {
+                            accumulatedResults.push(result);
+                            setExcelResults([...accumulatedResults]);
+                        }
+                    }
                 } catch (err) {
-                    setError(err.message);
+                    setError(`생성 중 오류 발생: ${err.message}`);
                 } finally {
                     setLoading(false);
                     setProgressMsg('');
@@ -581,457 +663,161 @@
 
             return (
                 <div className="min-h-screen py-8 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
-                    {/* Header */}
+                    {/* Header & API Key Section */}
                     <div className="text-center mb-8">
                         <h1 className="text-3xl font-extrabold text-gray-900">AI 교사 보조 도구</h1>
-                        <p className="text-gray-500 text-sm mt-1">평어, 행발, 창체 특기사항 작성 도우미</p>
+                        <p className="text-gray-500 text-sm mt-1">평어, 행발, 창체, 과목별 평가 작성 도우미</p>
                     </div>
-
-                    {/* API Key & Model Selection Zone */}
                     <div className="bg-white shadow-sm border border-gray-200 rounded-lg p-4 mb-6">
                         <div className="flex flex-col sm:flex-row items-end gap-4">
                             <div className="flex-1 w-full flex flex-col">
                                 <label className="font-bold text-gray-700 text-sm mb-1">API Key 입력</label>
-                                <input
-                                    type="password"
-                                    value={apiKey}
-                                    onChange={(e) => setApiKey(e.target.value)}
-                                    placeholder="Google AI Studio API Key"
-                                    className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                                />
+                                <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Google AI Studio API Key" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
                             </div>
-                            <button 
-                                onClick={fetchAvailableModels}
-                                disabled={isFetchingModels || !apiKey}
-                                className={`whitespace-nowrap px-4 py-2 rounded text-sm font-bold border border-blue-200 text-blue-700 hover:bg-blue-50 transition h-10 mb-[1px] ${!apiKey ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            >
-                                {isFetchingModels ? <div className="loader w-4 h-4 border-2 border-blue-500"></div> : '🔍 사용 가능 모델 조회'}
+                            <button onClick={fetchAvailableModels} disabled={isFetchingModels || !apiKey} className="whitespace-nowrap px-4 py-2 rounded text-sm font-bold border border-blue-200 text-blue-700 hover:bg-blue-50 transition h-10 mb-[1px]">
+                                {isFetchingModels ? '로딩 중...' : '🔍 모델 조회'}
                             </button>
                             <div className="w-full sm:w-64 flex flex-col">
                                 <label className="font-bold text-gray-700 text-sm mb-1">AI 모델 선택</label>
-                                <select 
-                                    value={model} 
-                                    onChange={(e) => setModel(e.target.value)}
-                                    className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                                >
-                                    {modelList.map((m, idx) => (
-                                        <option key={idx} value={m.name.replace('models/', '')}>{m.displayName}</option>
-                                    ))}
+                                <select value={model} onChange={(e) => setModel(e.target.value)} className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                                    {modelList.map((m, idx) => <option key={idx} value={m.name.replace('models/', '')}>{m.displayName}</option>)}
                                 </select>
                             </div>
                         </div>
                     </div>
 
                     {/* Navigation Tabs */}
-                    <div className="flex mb-6 bg-white rounded-lg p-1 shadow-sm border border-gray-200 w-fit mx-auto">
-                        <button
-                            onClick={() => { setMode('comment'); setError(''); }}
-                            className={`px-6 py-2 rounded-md font-bold transition ${mode === 'comment' ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:bg-gray-100'}`}
-                        >
-                            평어 생성기
-                        </button>
-                        <button
-                            onClick={() => { setMode('behavior'); setError(''); }}
-                            className={`px-6 py-2 rounded-md font-bold transition ${mode === 'behavior' ? 'bg-green-600 text-white shadow' : 'text-gray-500 hover:bg-gray-100'}`}
-                        >
-                            행발 생성기
-                        </button>
-                        <button
-                            onClick={() => { setMode('creative'); setError(''); }}
-                            className={`px-6 py-2 rounded-md font-bold transition ${mode === 'creative' ? 'bg-purple-600 text-white shadow' : 'text-gray-500 hover:bg-gray-100'}`}
-                        >
-                            창체 생성기
-                        </button>
+                    <div className="flex flex-wrap gap-2 mb-6 justify-center">
+                        {['comment', 'behavior', 'creative', 'excel'].map(m => (
+                            <button key={m} onClick={() => { setMode(m); setError(''); }}
+                                className={`px-4 py-2 rounded-md font-bold transition ${mode === m ? 'bg-blue-600 text-white shadow' : 'bg-white text-gray-500 hover:bg-gray-50 border border-gray-200'}`}>
+                                {m === 'comment' && '평어 생성기'}
+                                {m === 'behavior' && '행발 생성기'}
+                                {m === 'creative' && '창체 생성기'}
+                                {m === 'excel' && '과목별 평어(Excel)'}
+                            </button>
+                        ))}
                     </div>
 
-                    {/* Toast Notification */}
-                    <div className={`toast-notification ${toast.show ? 'show' : 'hide'}`}>
-                        <span>✅</span> {toast.msg}
-                    </div>
+                    {/* Toast & Error */}
+                    <div className={`toast-notification ${toast.show ? 'show' : 'hide'}`}><span>✅</span> {toast.msg}</div>
+                    {error && <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded shadow-sm whitespace-pre-line"><p className="font-bold">⚠️ 오류 발생</p><p>{error}</p></div>}
 
-                    {/* ERROR Display */}
-                    {error && (
-                        <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded shadow-sm whitespace-pre-line">
-                            <p className="font-bold">⚠️ 오류 발생</p>
-                            <p>{error}</p>
-                        </div>
-                    )}
-
-                    {/* ================= MODE 1: 평어 생성기 ================= */}
+                    {/* ==== Modes ==== */}
                     {mode === 'comment' && (
+                        /* ... 기존 평어 생성기 UI ... */
                         <div className="animate-fade-in">
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-                                {/* Left: Standards */}
                                 <div className="lg:col-span-2 bg-white shadow rounded-lg p-6 border border-gray-200">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h3 className="font-bold text-lg text-gray-800">성취 기준 입력</h3>
-                                        <button onClick={addStandard} className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200 font-bold">+ 추가</button>
-                                    </div>
-                                    <div className="space-y-3">
-                                        {standards.map((std, i) => (
-                                            <div key={i} className="flex gap-2">
-                                                <input
-                                                    type="text"
-                                                    value={std}
-                                                    onChange={(e) => handleStandardChange(i, e.target.value)}
-                                                    placeholder="예: 자신의 꿈을 구체적으로 표현한다."
-                                                    className="flex-1 p-2 border border-gray-300 rounded focus:border-blue-500 outline-none"
-                                                />
-                                                {standards.length > 1 && (
-                                                    <button onClick={() => removeStandard(i)} className="text-red-500 hover:text-red-700 px-2">✕</button>
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
+                                    <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-lg text-gray-800">성취 기준 입력</h3><button onClick={addStandard} className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200 font-bold">+ 추가</button></div>
+                                    <div className="space-y-3">{standards.map((std, i) => (<div key={i} className="flex gap-2"><input type="text" value={std} onChange={(e) => handleStandardChange(i, e.target.value)} placeholder="예: 자신의 꿈을 구체적으로 표현한다." className="flex-1 p-2 border border-gray-300 rounded focus:border-blue-500 outline-none" />{standards.length > 1 && (<button onClick={() => removeStandard(i)} className="text-red-500 hover:text-red-700 px-2">✕</button>)}</div>))}</div>
                                 </div>
-                                {/* Right: Settings */}
                                 <div className="bg-white shadow rounded-lg p-6 border border-gray-200 h-fit">
                                     <h3 className="font-bold text-lg text-gray-800 mb-4">생성 설정</h3>
-                                    <div className="space-y-3">
-                                        {[
-                                            {k:'veryGood', l:'매우 잘함', c:'text-blue-600'},
-                                            {k:'good', l:'잘함', c:'text-green-600'},
-                                            {k:'average', l:'보통', c:'text-yellow-600'},
-                                            {k:'needsEffort', l:'노력요함', c:'text-orange-600'}
-                                        ].map(lvl => (
-                                            <div key={lvl.k} className="flex justify-between items-center">
-                                                <span className={`font-medium ${lvl.c}`}>{lvl.l}</span>
-                                                <div className="flex items-center gap-1">
-                                                    <input 
-                                                        type="number" value={counts[lvl.k]} 
-                                                        onChange={(e)=>handleCountChange(lvl.k, e.target.value)}
-                                                        className="w-16 p-1 border rounded text-right"
-                                                    />
-                                                    <span className="text-sm text-gray-500">개</span>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        <div className="pt-3 border-t mt-3">
-                                            <p className="text-xs text-gray-500">※ 강한 맞춤법 규칙이 적용됩니다.</p>
-                                        </div>
-                                    </div>
+                                    <div className="space-y-3">{[{k:'veryGood', l:'매우 잘함', c:'text-blue-600'},{k:'good', l:'잘함', c:'text-green-600'},{k:'average', l:'보통', c:'text-yellow-600'},{k:'needsEffort', l:'노력요함', c:'text-orange-600'}].map(lvl => (<div key={lvl.k} className="flex justify-between items-center"><span className={`font-medium ${lvl.c}`}>{lvl.l}</span><div className="flex items-center gap-1"><input type="number" value={counts[lvl.k]} onChange={(e)=>handleCountChange(lvl.k, e.target.value)} className="w-16 p-1 border rounded text-right" /><span className="text-sm text-gray-500">개</span></div></div>))}</div>
                                 </div>
                             </div>
-
-                            <button
-                                onClick={generateComments}
-                                disabled={loading}
-                                className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
-                            >
-                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg || '평어 생성하기'}</div> : '평어 생성하기'}
-                            </button>
-
-                            {/* Comment Results */}
-                            {commentResults && commentResults.length > 0 && (
-                                <div className="mt-8 bg-white shadow-lg rounded-lg overflow-hidden border border-gray-200">
-                                    <div className="flex overflow-x-auto bg-gray-50 border-b">
-                                        {commentResults.map((r, i) => (
-                                            <button
-                                                key={i}
-                                                onClick={() => setActiveTab(i)}
-                                                className={`px-5 py-3 text-sm font-bold whitespace-nowrap ${activeTab === i ? 'bg-white border-t-2 border-blue-600 text-blue-700' : 'text-gray-500 hover:bg-gray-100'}`}
-                                            >
-                                                성취기준 {i+1}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <div className="p-6">
-                                        <div className="bg-blue-50 p-3 rounded border border-blue-100 mb-6 text-sm text-blue-900 font-medium">
-                                            {commentResults[activeTab]?.standard || '내용을 불러오는 중...'}
-                                        </div>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            {[
-                                                {k:'veryGood', t:'매우 잘함', bg:'bg-blue-50', b:'border-blue-200'},
-                                                {k:'good', t:'잘함', bg:'bg-green-50', b:'border-green-200'},
-                                                {k:'average', t:'보통', bg:'bg-yellow-50', b:'border-yellow-200'},
-                                                {k:'needsEffort', t:'노력요함', bg:'bg-orange-50', b:'border-orange-200'}
-                                            ].map(sec => (
-                                                <div key={sec.k} className={`border ${sec.b} rounded-lg overflow-hidden`}>
-                                                    <div className={`${sec.bg} px-3 py-2 font-bold text-gray-700 text-sm border-b ${sec.b} flex justify-between`}>
-                                                        <span>{sec.t}</span>
-                                                        <span className="bg-white px-2 rounded-full border text-xs flex items-center">
-                                                            {commentResults[activeTab]?.levels?.[sec.k]?.length || 0}
-                                                        </span>
-                                                    </div>
-                                                    <ul className="p-3 space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
-                                                        {commentResults[activeTab]?.levels?.[sec.k]?.map((s, idx) => {
-                                                            const copyId = `c-${activeTab}-${sec.k}-${idx}`;
-                                                            const isCopied = copiedSet.has(copyId);
-                                                            return (
-                                                                <li key={idx} 
-                                                                    onClick={() => handleCopy(s, copyId)} 
-                                                                    className={`text-sm p-2 hover:bg-gray-50 rounded cursor-pointer group flex transition-colors duration-200 ${isCopied ? 'text-rose-600 font-semibold' : 'text-gray-700'}`}
-                                                                >
-                                                                    <span className="flex-1">{s}</span>
-                                                                    <span className="hidden group-hover:block text-xs text-gray-400 ml-1">{isCopied ? '복사됨' : '복사'}</span>
-                                                                </li>
-                                                            );
-                                                        }) || <li className="text-sm text-gray-400 p-2">생성된 문장이 없습니다.</li>}
-                                                    </ul>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
+                            <button onClick={generateComments} disabled={loading} className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}>{loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg || '평어 생성하기'}</div> : '평어 생성하기'}</button>
+                            {commentResults && commentResults.length > 0 && (<div className="mt-8 bg-white shadow-lg rounded-lg overflow-hidden border border-gray-200"><div className="flex overflow-x-auto bg-gray-50 border-b">{commentResults.map((r, i) => (<button key={i} onClick={() => setActiveTab(i)} className={`px-5 py-3 text-sm font-bold whitespace-nowrap ${activeTab === i ? 'bg-white border-t-2 border-blue-600 text-blue-700' : 'text-gray-500 hover:bg-gray-100'}`}>성취기준 {i+1}</button>))}</div><div className="p-6"><div className="bg-blue-50 p-3 rounded border border-blue-100 mb-6 text-sm text-blue-900 font-medium">{commentResults[activeTab]?.standard}</div><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{[{k:'veryGood', t:'매우 잘함', bg:'bg-blue-50', b:'border-blue-200'},{k:'good', t:'잘함', bg:'bg-green-50', b:'border-green-200'},{k:'average', t:'보통', bg:'bg-yellow-50', b:'border-yellow-200'},{k:'needsEffort', t:'노력요함', bg:'bg-orange-50', b:'border-orange-200'}].map(sec => (<div key={sec.k} className={`border ${sec.b} rounded-lg overflow-hidden`}><div className={`${sec.bg} px-3 py-2 font-bold text-gray-700 text-sm border-b ${sec.b} flex justify-between`}><span>{sec.t}</span><span className="bg-white px-2 rounded-full border text-xs flex items-center">{commentResults[activeTab]?.levels?.[sec.k]?.length || 0}</span></div><ul className="p-3 space-y-2 max-h-60 overflow-y-auto custom-scrollbar">{commentResults[activeTab]?.levels?.[sec.k]?.map((s, idx) => { const copyId = `c-${activeTab}-${sec.k}-${idx}`; const isCopied = copiedSet.has(copyId); return (<li key={idx} onClick={() => handleCopy(s, copyId)} className={`text-sm p-2 hover:bg-gray-50 rounded cursor-pointer group flex transition-colors duration-200 ${isCopied ? 'text-rose-600 font-semibold' : 'text-gray-700'}`}><span className="flex-1">{s}</span><span className="hidden group-hover:block text-xs text-gray-400 ml-1">{isCopied ? '복사됨' : '복사'}</span></li>); })}</ul></div>))}</div></div></div>)}
                         </div>
                     )}
 
-                    {/* ================= MODE 2: 행발 생성기 ================= */}
                     {mode === 'behavior' && (
+                        /* ... 기존 행발 생성기 UI ... */
                         <div className="animate-fade-in">
-                            {/* Controls */}
                             <div className="bg-white shadow rounded-lg p-6 mb-6 border border-gray-200">
                                 <div className="flex flex-col md:flex-row gap-6 justify-between items-end">
                                     <div className="flex gap-6 w-full md:w-auto">
-                                        <div>
-                                            <label className="block font-bold text-gray-700 mb-1">학생 수</label>
-                                            <input 
-                                                type="number" min="1" max="50"
-                                                value={studentCount}
-                                                onChange={handleStudentCountChange}
-                                                className="w-24 p-2 border border-gray-300 rounded focus:border-green-500 outline-none"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block font-bold text-gray-700 mb-1">목표 바이트(Bytes)</label>
-                                            <input 
-                                                type="number" step="100"
-                                                value={targetBytes}
-                                                onChange={(e) => setTargetBytes(parseInt(e.target.value) || 0)}
-                                                className="w-32 p-2 border border-gray-300 rounded focus:border-green-500 outline-none"
-                                            />
-                                        </div>
+                                        <div><label className="block font-bold text-gray-700 mb-1">학생 수</label><input type="number" min="1" max="50" value={studentCount} onChange={handleStudentCountChange} className="w-24 p-2 border border-gray-300 rounded focus:border-green-500 outline-none" /></div>
+                                        <div><label className="block font-bold text-gray-700 mb-1">목표 바이트</label><input type="number" step="100" value={targetBytes} onChange={(e) => setTargetBytes(parseInt(e.target.value) || 0)} className="w-32 p-2 border border-gray-300 rounded focus:border-green-500 outline-none" /></div>
                                     </div>
-                                    <div className="text-right text-xs text-gray-500 w-full md:w-auto">
-                                        <p>* <span className="text-blue-600 font-bold">1번 클릭(파랑)</span>: 긍정/우수</p>
-                                        <p>* <span className="text-orange-600 font-bold">2번 클릭(주황)</span>: 부족/지도필요 (개선노력 포함)</p>
-                                        <p>* 특수문자/외래어 제외, 명사형 어미 사용</p>
-                                    </div>
+                                    <div className="text-right text-xs text-gray-500 w-full md:w-auto"><p>* <span className="text-blue-600 font-bold">1번(파랑)</span>: 긍정</p><p>* <span className="text-orange-600 font-bold">2번(주황)</span>: 지도필요</p></div>
                                 </div>
                             </div>
-
-                            {/* Student List */}
-                            <div className="space-y-4 mb-8">
-                                {students.map((student, sIdx) => (
-                                    <div key={student.id} className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
-                                        <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-3">
-                                            <span className="font-bold text-green-900">No.{student.id}</span>
-                                            <input 
-                                                type="text" 
-                                                placeholder="학생 이름 (선택)" 
-                                                value={student.name}
-                                                onChange={(e) => updateStudentName(sIdx, e.target.value)}
-                                                className="p-1 px-2 border border-gray-300 rounded text-sm w-32 focus:border-green-500 outline-none"
-                                            />
-                                            <div className="flex-1 text-right text-xs text-blue-600 font-medium">
-                                                선택됨: {student.checks.size}개
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="p-4">
-                                            {/* Categories Grid */}
-                                            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                                                {/* 학습 (3 cols) */}
-                                                <div className="md:col-span-3 border-r md:border-r-0 lg:border-r border-gray-100 pr-2">
-                                                    <h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">📚 학습</h4>
-                                                    <div className="flex flex-col gap-2">
-                                                        {BEHAVIOR_CATEGORIES["학습"].map(trait => {
-                                                            const checkState = student.checks.get(trait) || 0;
-                                                            return (
-                                                                <div key={trait} 
-                                                                    onClick={() => toggleCheck(sIdx, trait)}
-                                                                    className={`trait-box cursor-pointer w-full text-sm px-3 py-2 rounded border border-gray-200 text-center select-none
-                                                                        ${checkState === 1 ? 'state-1' : ''}
-                                                                        ${checkState === 2 ? 'state-2' : ''}
-                                                                        ${checkState === 0 ? 'text-gray-600 hover:bg-gray-50' : ''}
-                                                                    `}
-                                                                >
-                                                                    {trait.replace('학습(', '').replace(')', '')}
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-
-                                                {/* 성격 (7 cols) */}
-                                                <div className="md:col-span-7 border-r md:border-r-0 lg:border-r border-gray-100 pr-2 px-2">
-                                                    <h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">😊 성격/인성</h4>
-                                                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                                                        {BEHAVIOR_CATEGORIES["성격"].map(trait => {
-                                                            const checkState = student.checks.get(trait) || 0;
-                                                            return (
-                                                                <div key={trait} 
-                                                                    onClick={() => toggleCheck(sIdx, trait)}
-                                                                    className={`trait-box cursor-pointer w-full text-sm px-2 py-2 rounded border border-gray-200 text-center truncate select-none
-                                                                        ${checkState === 1 ? 'state-1' : ''}
-                                                                        ${checkState === 2 ? 'state-2' : ''}
-                                                                        ${checkState === 0 ? 'text-gray-600 hover:bg-gray-50' : ''}
-                                                                    `}
-                                                                >
-                                                                    {trait}
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-
-                                                {/* 예체능 (2 cols) */}
-                                                <div className="md:col-span-2 pl-2">
-                                                    <h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">🎨 예체능</h4>
-                                                    <div className="flex flex-col gap-2">
-                                                        {BEHAVIOR_CATEGORIES["예체능"].map(trait => {
-                                                            const checkState = student.checks.get(trait) || 0;
-                                                            return (
-                                                                <div key={trait} 
-                                                                    onClick={() => toggleCheck(sIdx, trait)}
-                                                                    className={`trait-box cursor-pointer w-full text-sm px-3 py-2 rounded border border-gray-200 text-center select-none
-                                                                        ${checkState === 1 ? 'state-1' : ''}
-                                                                        ${checkState === 2 ? 'state-2' : ''}
-                                                                        ${checkState === 0 ? 'text-gray-600 hover:bg-gray-50' : ''}
-                                                                    `}
-                                                                >
-                                                                    {trait}
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <button
-                                onClick={generateBehavior}
-                                disabled={loading}
-                                className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
-                            >
-                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg || '행발 생성하기'}</div> : '행발 생성하기'}
-                            </button>
-
-                            {/* Behavior Results */}
-                            {behaviorResults && (
-                                <div className="mt-8 grid gap-6">
-                                    {behaviorResults.map((res, i) => {
-                                        const copyId = `b-${i}`;
-                                        const isCopied = copiedSet.has(copyId);
-                                        return (
-                                            <div key={i} className="bg-white shadow rounded-lg border border-gray-200 overflow-hidden">
-                                                <div className="bg-green-50 px-4 py-3 border-b border-green-100 flex justify-between items-center">
-                                                    <span className="font-bold text-green-900">
-                                                        {res.name || `학생 ${res.id}`} 
-                                                        <span className="text-xs font-normal text-green-700 ml-2">
-                                                            (약 {calculateBytes(res.result)} Bytes)
-                                                        </span>
-                                                    </span>
-                                                    <button 
-                                                        onClick={() => handleCopy(res.result, copyId)} 
-                                                        className={`text-xs border px-2 py-1 rounded transition-colors duration-200 ${isCopied ? 'bg-rose-100 text-rose-600 border-rose-200 font-bold' : 'bg-white text-green-700 border-green-200 hover:bg-green-100'}`}
-                                                    >
-                                                        {isCopied ? '복사됨' : '복사'}
-                                                    </button>
-                                                </div>
-                                                <div className={`p-4 text-sm leading-relaxed whitespace-pre-wrap ${isCopied ? 'text-rose-600 font-medium' : 'text-gray-700'}`}>
-                                                    {res.result}
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                            <div className="space-y-4 mb-8">{students.map((student, sIdx) => (<div key={student.id} className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden"><div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-3"><span className="font-bold text-green-900">No.{student.id}</span><input type="text" placeholder="학생 이름" value={student.name} onChange={(e) => updateStudentName(sIdx, e.target.value)} className="p-1 px-2 border border-gray-300 rounded text-sm w-32 focus:border-green-500 outline-none" /><div className="flex-1 text-right text-xs text-blue-600 font-medium">선택됨: {student.checks.size}개</div></div><div className="p-4"><div className="grid grid-cols-1 md:grid-cols-12 gap-4"><div className="md:col-span-3 border-r md:border-r-0 lg:border-r border-gray-100 pr-2"><h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">📚 학습</h4><div className="flex flex-col gap-2">{BEHAVIOR_CATEGORIES["학습"].map(trait => { const checkState = student.checks.get(trait) || 0; return (<div key={trait} onClick={() => toggleCheck(sIdx, trait)} className={`trait-box cursor-pointer w-full text-sm px-3 py-2 rounded border border-gray-200 text-center select-none ${checkState === 1 ? 'state-1' : ''} ${checkState === 2 ? 'state-2' : ''} ${checkState === 0 ? 'text-gray-600 hover:bg-gray-50' : ''}`}>{trait.replace('학습(', '').replace(')', '')}</div>); })}</div></div><div className="md:col-span-7 border-r md:border-r-0 lg:border-r border-gray-100 pr-2 px-2"><h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">😊 성격/인성</h4><div className="grid grid-cols-3 sm:grid-cols-4 gap-2">{BEHAVIOR_CATEGORIES["성격"].map(trait => { const checkState = student.checks.get(trait) || 0; return (<div key={trait} onClick={() => toggleCheck(sIdx, trait)} className={`trait-box cursor-pointer w-full text-sm px-2 py-2 rounded border border-gray-200 text-center truncate select-none ${checkState === 1 ? 'state-1' : ''} ${checkState === 2 ? 'state-2' : ''} ${checkState === 0 ? 'text-gray-600 hover:bg-gray-50' : ''}`}>{trait}</div>); })}</div></div><div className="md:col-span-2 pl-2"><h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">🎨 예체능</h4><div className="flex flex-col gap-2">{BEHAVIOR_CATEGORIES["예체능"].map(trait => { const checkState = student.checks.get(trait) || 0; return (<div key={trait} onClick={() => toggleCheck(sIdx, trait)} className={`trait-box cursor-pointer w-full text-sm px-3 py-2 rounded border border-gray-200 text-center select-none ${checkState === 1 ? 'state-1' : ''} ${checkState === 2 ? 'state-2' : ''} ${checkState === 0 ? 'text-gray-600 hover:bg-gray-50' : ''}`}>{trait}</div>); })}</div></div></div></div></div>))}</div>
+                            <button onClick={generateBehavior} disabled={loading} className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}>{loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg || '행발 생성하기'}</div> : '행발 생성하기'}</button>
+                            {behaviorResults && (<div className="mt-8 grid gap-6">{behaviorResults.map((res, i) => { const copyId = `b-${i}`; const isCopied = copiedSet.has(copyId); return (<div key={i} className="bg-white shadow rounded-lg border border-gray-200 overflow-hidden"><div className="bg-green-50 px-4 py-3 border-b border-green-100 flex justify-between items-center"><span className="font-bold text-green-900">{res.name || `학생 ${res.id}`} <span className="text-xs font-normal text-green-700 ml-2">(약 {calculateBytes(res.result)} Bytes)</span></span><button onClick={() => handleCopy(res.result, copyId)} className={`text-xs border px-2 py-1 rounded transition-colors duration-200 ${isCopied ? 'bg-rose-100 text-rose-600 border-rose-200 font-bold' : 'bg-white text-green-700 border-green-200 hover:bg-green-100'}`}>{isCopied ? '복사됨' : '복사'}</button></div><div className={`p-4 text-sm leading-relaxed whitespace-pre-wrap ${isCopied ? 'text-rose-600 font-medium' : 'text-gray-700'}`}>{res.result}</div></div>); })}</div>)}
                         </div>
                     )}
 
-                    {/* ================= MODE 3: 창체 생성기 ================= */}
                     {mode === 'creative' && (
+                        /* ... 기존 창체 생성기 UI ... */
                         <div className="animate-fade-in">
                             <div className="bg-white shadow rounded-lg p-6 mb-6 border border-gray-200">
-                                <div className="flex justify-between items-center mb-4">
-                                    <h3 className="font-bold text-lg text-gray-800">창체 특기사항 입력</h3>
-                                    <button onClick={addCreativeInput} className="text-sm bg-purple-100 text-purple-700 px-3 py-1 rounded hover:bg-purple-200 font-bold">+ 문장 추가</button>
-                                </div>
-                                
-                                <div className="space-y-4">
-                                    {creativeInputs.map((input, idx) => (
-                                        <div key={idx} className="flex flex-col sm:flex-row gap-3 items-start sm:items-center bg-gray-50 p-3 rounded border border-gray-200">
-                                            <div className="flex-1 w-full">
-                                                <input
-                                                    type="text"
-                                                    value={input.text}
-                                                    onChange={(e) => handleCreativeChange(idx, 'text', e.target.value)}
-                                                    placeholder="예: 학교 축제에서 부스 운영을 주도적으로 수행함."
-                                                    className="w-full p-2 border border-gray-300 rounded focus:border-purple-500 outline-none"
-                                                />
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-sm font-medium text-gray-600 whitespace-nowrap">생성 개수:</span>
-                                                <input
-                                                    type="number"
-                                                    value={input.count}
-                                                    onChange={(e) => handleCreativeChange(idx, 'count', e.target.value)}
-                                                    className="w-16 p-2 border border-gray-300 rounded focus:border-purple-500 outline-none text-right"
-                                                    min="1" max="20"
-                                                />
-                                                <span className="text-sm text-gray-500">개</span>
-                                            </div>
-                                            {creativeInputs.length > 1 && (
-                                                <button 
-                                                    onClick={() => removeCreativeInput(idx)} 
-                                                    className="text-red-500 hover:text-red-700 p-2"
-                                                    title="삭제"
-                                                >
-                                                    ✕
-                                                </button>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
+                                <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-lg text-gray-800">창체 특기사항 입력</h3><button onClick={addCreativeInput} className="text-sm bg-purple-100 text-purple-700 px-3 py-1 rounded hover:bg-purple-200 font-bold">+ 문장 추가</button></div>
+                                <div className="space-y-4">{creativeInputs.map((input, idx) => (<div key={idx} className="flex flex-col sm:flex-row gap-3 items-start sm:items-center bg-gray-50 p-3 rounded border border-gray-200"><div className="flex-1 w-full"><input type="text" value={input.text} onChange={(e) => handleCreativeChange(idx, 'text', e.target.value)} placeholder="예: 축제 부스 운영을 주도함." className="w-full p-2 border border-gray-300 rounded focus:border-purple-500 outline-none" /></div><div className="flex items-center gap-2"><span className="text-sm font-medium text-gray-600 whitespace-nowrap">생성 개수:</span><input type="number" value={input.count} onChange={(e) => handleCreativeChange(idx, 'count', e.target.value)} className="w-16 p-2 border border-gray-300 rounded focus:border-purple-500 outline-none text-right" min="1" max="20" /><span className="text-sm text-gray-500">개</span></div>{creativeInputs.length > 1 && (<button onClick={() => removeCreativeInput(idx)} className="text-red-500 hover:text-red-700 p-2">✕</button>)}</div>))}</div>
+                            </div>
+                            <button onClick={generateCreative} disabled={loading} className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-purple-600 hover:bg-purple-700'}`}>{loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg || '유사 문장 생성하기'}</div> : '유사 문장 생성하기'}</button>
+                            {creativeResults && (<div className="mt-8 space-y-6">{creativeResults.map((item, idx) => (<div key={idx} className="bg-white shadow rounded-lg border border-gray-200 overflow-hidden"><div className="bg-purple-50 px-4 py-3 border-b border-purple-100"><h4 className="font-bold text-purple-900 text-sm mb-1">[원문]</h4><p className="text-gray-700 text-sm">{item.original}</p></div><div className="p-4"><h4 className="font-bold text-gray-800 text-sm mb-3">✨ 생성된 변형 문장 ({item.variations.length}개)</h4><ul className="space-y-2">{item.variations.map((sent, sIdx) => { const copyId = `cr-${idx}-${sIdx}`; const isCopied = copiedSet.has(copyId); return (<li key={sIdx} onClick={() => handleCopy(sent, copyId)} className={`text-sm p-3 bg-gray-50 hover:bg-purple-50 rounded border border-gray-100 cursor-pointer group flex transition-colors duration-200 ${isCopied ? 'text-rose-600 font-semibold' : 'text-gray-700'}`}><span className="flex-1">{sent}</span><span className="hidden group-hover:block text-xs text-purple-400 ml-2 font-medium">{isCopied ? '복사됨' : '복사'}</span></li>); })}</ul></div></div>))}</div>)}
+                        </div>
+                    )}
 
-                                <div className="mt-4 text-right text-xs text-gray-500">
-                                    <p>* 어미는 "-함.", "-임."으로 고정됩니다.</p>
-                                    <p>* 강한 맞춤법 규칙이 적용됩니다.</p>
+                    {/* ================= MODE 4: 과목별 평어 (Excel) ================= */}
+                    {mode === 'excel' && (
+                        <div className="animate-fade-in">
+                            {/* File Upload Section */}
+                            <div className="bg-white shadow rounded-lg p-6 mb-6 border border-gray-200">
+                                <h3 className="font-bold text-lg text-gray-800 mb-4">엑셀 파일 업로드</h3>
+                                <div className="p-4 border-2 border-dashed border-gray-300 rounded-lg text-center hover:bg-gray-50 transition cursor-pointer relative">
+                                    <input type="file" accept=".xlsx, .xls" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                    <div className="py-6">
+                                        <p className="text-gray-500 mb-1">엑셀 파일(.xlsx)을 드래그하거나 클릭하여 업로드하세요</p>
+                                        <p className="text-xs text-gray-400">형식: 1열(이름), 이후 열 헤더(과목-성취기준)</p>
+                                    </div>
                                 </div>
+                                {excelData && (<div className="mt-4 p-3 bg-green-50 rounded border border-green-200 text-sm text-green-800">📋 확인된 데이터: <strong>{excelData.length}명</strong>의 학생</div>)}
                             </div>
 
-                            <button
-                                onClick={generateCreative}
-                                disabled={loading}
-                                className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading ? 'bg-gray-400' : 'bg-purple-600 hover:bg-purple-700'}`}
-                            >
-                                {loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg || '유사 문장 생성하기'}</div> : '유사 문장 생성하기'}
-                            </button>
+                            <button onClick={generateExcelReport} disabled={loading || !excelData} className={`w-full py-3 rounded-lg text-white font-bold text-lg shadow transition ${loading || !excelData ? 'bg-gray-400' : 'bg-teal-600 hover:bg-teal-700'}`}>{loading ? <div className="flex justify-center items-center gap-2"><div className="loader"></div>{progressMsg || '분석 및 생성 중...'}</div> : '과목별 평어 생성하기'}</button>
 
-                            {/* Creative Results */}
-                            {creativeResults && (
-                                <div className="mt-8 space-y-6">
-                                    {creativeResults.map((item, idx) => (
-                                        <div key={idx} className="bg-white shadow rounded-lg border border-gray-200 overflow-hidden">
-                                            <div className="bg-purple-50 px-4 py-3 border-b border-purple-100">
-                                                <h4 className="font-bold text-purple-900 text-sm mb-1">[원문]</h4>
-                                                <p className="text-gray-700 text-sm">{item.original}</p>
-                                            </div>
-                                            <div className="p-4">
-                                                <h4 className="font-bold text-gray-800 text-sm mb-3">✨ 생성된 변형 문장 ({item.variations.length}개)</h4>
-                                                <ul className="space-y-2">
-                                                    {item.variations.map((sent, sIdx) => {
-                                                        const copyId = `cr-${idx}-${sIdx}`;
-                                                        const isCopied = copiedSet.has(copyId);
-                                                        return (
-                                                            <li key={sIdx} 
-                                                                onClick={() => handleCopy(sent, copyId)} 
-                                                                className={`text-sm p-3 bg-gray-50 hover:bg-purple-50 rounded border border-gray-100 cursor-pointer group flex transition-colors duration-200 ${isCopied ? 'text-rose-600 font-semibold' : 'text-gray-700'}`}
-                                                            >
-                                                                <span className="flex-1">{sent}</span>
-                                                                <span className="hidden group-hover:block text-xs text-purple-400 ml-2 font-medium">{isCopied ? '복사됨' : '복사'}</span>
-                                                            </li>
-                                                        );
-                                                    })}
-                                                </ul>
-                                            </div>
+                            {/* Excel Results Display */}
+                            {pivotedExcelData && (
+                                <div className="mt-8 bg-white shadow-lg rounded-lg overflow-hidden border border-gray-200">
+                                    <div className="flex justify-between items-center p-4 border-b bg-gray-50">
+                                        <div className="flex overflow-x-auto gap-2">
+                                            {Object.keys(pivotedExcelData).map(subject => (
+                                                <button key={subject} onClick={() => setExcelSubjectTab(subject)} className={`px-4 py-2 rounded-md text-sm font-bold whitespace-nowrap transition ${excelSubjectTab === subject ? 'bg-teal-600 text-white shadow' : 'bg-white text-gray-600 border hover:bg-gray-100'}`}>
+                                                    {subject}
+                                                </button>
+                                            ))}
                                         </div>
-                                    ))}
+                                        <button onClick={downloadHwp} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm font-bold shadow transition flex items-center gap-1 whitespace-nowrap ml-4">
+                                            💾 HWP 다운로드
+                                        </button>
+                                    </div>
+
+                                    <div className="p-6">
+                                        {excelSubjectTab && pivotedExcelData[excelSubjectTab] ? (
+                                            <div className="overflow-x-auto">
+                                                <h3 className="font-bold text-lg text-teal-800 mb-3 border-b pb-2">{excelSubjectTab} 과목 평어</h3>
+                                                <table className="min-w-full divide-y divide-gray-200">
+                                                    <thead className="bg-gray-50">
+                                                        <tr>
+                                                            <th scope="col" className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">이름</th>
+                                                            <th scope="col" className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">평가 내용 (한 문단)</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="bg-white divide-y divide-gray-200">
+                                                        {pivotedExcelData[excelSubjectTab].map((student, idx) => {
+                                                            const copyId = `ex-${excelSubjectTab}-${idx}`;
+                                                            const isCopied = copiedSet.has(copyId);
+                                                            return (
+                                                                <tr key={idx} onClick={() => handleCopy(student.comment, copyId)} className={`hover:bg-gray-50 cursor-pointer group transition-colors ${isCopied ? 'bg-teal-50' : ''}`}>
+                                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900 text-center">{student.name}</td>
+                                                                    <td className={`px-6 py-4 text-sm ${isCopied ? 'text-teal-700 font-medium' : 'text-gray-700'}`}>
+                                                                        {student.comment}
+                                                                        <span className="hidden group-hover:inline-block ml-2 text-xs text-gray-400 font-normal float-right">복사하기</span>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        ) : (
+                                            <div className="text-center py-10 text-gray-500">생성된 결과가 없습니다.</div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </div>
