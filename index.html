@@ -578,15 +578,23 @@
                 } catch (err) { setError(err.message); } finally { setLoading(false); setProgressMsg(''); }
             };
 
-            const generateCreative = async () => { /* ... */ 
+            const generateCreative = async () => { 
                 const validInputs = creativeInputs.filter(item => item.text.trim() !== '');
                 if (validInputs.length === 0) { setError('문장 입력 필요'); return; }
                 setLoading(true); setProgressMsg('창체 생성 중...'); setError(''); setCreativeResults(null); setCopiedSet(new Set());
                 try {
                     const prompt = `당신은 교사입니다. 입력된 문장과 유사한 문장을 생성하세요.
-                    [입력]: ${JSON.stringify(validInputs)}
-                    [규칙]: 어미 명사형(-함/-임). 특수문자 금지.
+                    
+                    [입력 데이터 (JSON)]
+                    ${JSON.stringify(validInputs)}
+
+                    [작성 규칙 - **수량 준수 필수**]
+                    1. **수량**: 입력 데이터의 각 항목에 있는 **"count" 숫자만큼 정확히** 변형 문장을 생성하세요. (예: count가 5면 반드시 5개를 생성, 10이면 10개)
+                    2. **어미**: 문장의 끝은 반드시 **"-함."** 또는 **"-임."** 이 두 가지 중 하나로만 끝나야 합니다.
+                    3. **내용**: 원문의 긍정적 맥락 유지하되 표현 다양화. 특수문자 제한(온점, 반점만 허용).
+
                     [출력(JSON)]: [{ "original": "...", "variations": ["...", ...] }, ...]`;
+                    
                     const result = await callGemini(prompt);
                     setCreativeResults(result);
                 } catch (err) { setError(err.message); } finally { setLoading(false); setProgressMsg(''); }
