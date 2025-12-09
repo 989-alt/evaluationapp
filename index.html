@@ -519,6 +519,11 @@
 
                 } catch (e) {
                     if (e.message.includes("사용량 제한")) throw e;
+                    // Syntax Error (Unterminated string) handling
+                    if (e instanceof SyntaxError) {
+                        console.error("JSON Parsing Error:", e);
+                        throw new Error("⚠️ AI 응답이 너무 길어 중간에 잘렸습니다. (Unterminated JSON)\n'성취 기준'을 조금씩 나누어 입력하거나, 생성 개수를 줄여주세요.");
+                    }
                     console.error("Error:", e);
                     throw new Error(`오류 발생: ${e.message}`);
                 }
@@ -529,7 +534,10 @@
                 const validStandards = standards.filter(s => s.trim() !== '');
                 if (validStandards.length === 0) { setError('성취 기준 입력 필요'); return; }
                 setLoading(true); setError(''); setCommentResults([]); setCopiedSet(new Set());
-                const BATCH_SIZE = 3; const totalBatches = Math.ceil(validStandards.length / BATCH_SIZE);
+                
+                // *** BATCH_SIZE를 1로 수정하여 안정성 확보 ***
+                const BATCH_SIZE = 1; 
+                const totalBatches = Math.ceil(validStandards.length / BATCH_SIZE);
                 let accumulatedResults = [];
                 const WAIT_TIME = getModelDelay(model);
                 try {
@@ -600,7 +608,7 @@
                 } catch (err) { setError(err.message); } finally { setLoading(false); setProgressMsg(''); }
             };
 
-            // 4. Excel Generator Function
+            // 4. Excel Generator Function with Privacy Protection
             const generateExcelReport = async () => {
                 if (!excelData || excelData.length === 0) {
                     setError("먼저 엑셀 파일을 업로드해주세요.");
@@ -611,13 +619,13 @@
                 setExcelResults([]);
                 setCopiedSet(new Set());
 
-                // 학생 1명씩 처리 (내용이 많을 수 있으므로)
                 let accumulatedResults = [];
                 const WAIT_TIME = getModelDelay(model);
 
                 try {
                     for (let i = 0; i < excelData.length; i++) {
                         const student = excelData[i];
+                        const fakeName = `학생${i + 1}`; // Anonymize name for API
                         setProgressMsg(`[${student.name}] 학생 평어 생성 중... (${i+1}/${excelData.length})`);
 
                         if (i > 0) await delay(WAIT_TIME);
@@ -626,31 +634,31 @@
                             당신은 초등학교 교사입니다. 학생의 과목별 성취 기준과 성취 수준(성적)을 바탕으로 '과목별 세부능력 및 특기사항(평어)'을 작성해주세요.
 
                             [학생 정보]
-                            이름: ${student.name}
+                            이름: ${fakeName} (익명)
                             성적 데이터: ${JSON.stringify(student.subjects)}
 
-                            [성취 수준별 작성 지침 - **학교 평가 기준안 준수**]
-                            각 성취 기준의 평가 결과(성적)에 따라 아래의 서술 방식과 어휘를 사용하여 작성하세요.
+                            [성취 수준별 작성 지침 - **학교 평가 기준안 엄격 준수**]
+                            각 성취 기준의 평가 결과(성적: '매우 잘함', '잘함', '보통', '노력 요함')를 확인하고, 반드시 아래의 어휘와 서술 방식을 사용하여 작성하세요.
 
                             1. **매우 잘함 (최상위)**:
-                               - **핵심 어휘**: "정확하게", "구체적으로", "논리적으로", "적극적으로", "탁월하게", "깊이 있게", "주도적으로"
-                               - **서술 방식**: 단순한 이해를 넘어 실생활에 적용하거나, 비판적/창의적 사고가 드러나도록 작성. 성취 기준을 완벽하게 수행함을 강조.
-                               - 예시: "~을 구체적으로 떠올리고 ~에 적합한 방법으로 적절하게 표현함.", "내용의 타당성을 매우 정확하게 판단함."
+                               - **핵심 어휘**: "매우 정확하게", "구체적으로", "논리적으로", "설득력 있는", "탁월하게", "깊이 있게", "주도적으로"
+                               - **서술 방식**: 단순한 이해를 넘어 실생활에 적용하거나, 비판적/창의적 사고가 드러나도록 작성. 성취 기준을 완벽하고 심화된 수준으로 수행함을 강조.
+                               - 예시: "내용의 타당성과 표현의 적절성을 **매우 정확하게** 판단함.", "자신의 구상에 적합한 방법으로 **구체적으로** 표현함."
 
                             2. **잘함 (상위)**:
-                               - **핵심 어휘**: "대체로", "적절하게", "알맞게", "바르게", "비교적 정확하게"
-                               - **서술 방식**: 성취 기준을 무리 없이 달성하고 수행함을 나타냄. 긍정적인 서술.
-                               - 예시: "~을 떠올리고 ~으로 대체로 적절하게 표현함.", "내용의 타당성을 정확하게 판단함."
+                               - **핵심 어휘**: "정확하게", "바르게", "적절하게", "알맞게", "비교적 정확하게"
+                               - **서술 방식**: 성취 기준을 오류 없이 무난하고 바르게 수행함을 나타냄. 긍정적이고 모범적인 서술. (단, '매우'와 같은 최상급 표현은 자제)
+                               - 예시: "내용의 타당성을 **정확하게** 판단함.", "자신의 구상에 적합한 방법으로 **대체로 적절하게** 표현함."
 
                             3. **보통 (중위)**:
-                               - **핵심 어휘**: "대략적으로", "어느 정도", "부분적으로", "비교적", "~하려고 노력함"
-                               - **서술 방식**: 핵심 개념은 이해했으나 세부적인 정확도가 다소 떨어지거나, 일반적인 수준의 수행을 함을 나타냄.
-                               - 예시: "~을 대략적으로 어울리는 방법으로 표현함.", "내용의 타당성을 대체로 판단함."
+                               - **핵심 어휘**: "대체로", "대략적으로", "어느 정도", "부분적으로", "비교적", "~하려고 노력함"
+                               - **서술 방식**: 핵심 개념은 이해했으나 세부적인 정확도가 다소 떨어지거나, 일반적이고 평이한 수준의 수행을 함을 나타냄.
+                               - 예시: "내용의 타당성을 **대체로** 판단함.", "자신의 구상에 **대략적으로** 어울리는 방법으로 표현함."
 
                             4. **노력 요함 (하위)**:
                                - **핵심 어휘**: "일부분", "일부", "교사의 도움을 받아", "안내가 필요함", "어려워하나 ~하려 함", "관심이 필요함"
-                               - **서술 방식**: 자발적 수행보다는 도움을 받아 수행하거나, 기초적인 단계에 머물러 있음을 격려하는 어조로 서술.
-                               - 예시: "제시된 방법을 선택하여 표현함.", "내용의 타당성을 부분적으로 판단함.", "교사의 도움을 받아 ~을 수행함."
+                               - **서술 방식**: 스스로 완벽하게 수행하기보다는 도움을 받아 수행했거나, 기초적인 단계에 머물러 있음을 격려하는 어조로 서술.
+                               - 예시: "내용의 타당성을 **부분적으로** 판단함.", "**교사의 도움을 받아** ~을 수행함.", "제시된 방법을 선택하여 표현함."
 
                             [작성 규칙 - **엄격 준수**]
                             1. **출력 구조**: 
@@ -665,7 +673,7 @@
                             [출력 형식: JSON]
                             반드시 아래 JSON 형식으로만 출력하세요.
                             {
-                                "name": "${student.name}",
+                                "name": "${fakeName}",
                                 "results": {
                                     "국어": "국어 성취기준1 평가 문장. 국어 성취기준2 평가 문장...",
                                     "수학": "수학 성취기준1 평가 문장. 수학 성취기준2 평가 문장..."
@@ -676,6 +684,8 @@
                         // 1명씩 요청하므로 단일 객체 반환 예상
                         const result = await callGemini(prompt);
                         if (result) {
+                            // Restore real name before saving
+                            result.name = student.name;
                             accumulatedResults.push(result);
                             setExcelResults([...accumulatedResults]);
                         }
