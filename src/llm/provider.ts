@@ -187,18 +187,30 @@ export async function generateText(c: Client, o: GenerateOptions): Promise<strin
       const parts: any[] = []
       if (o.pdfBase64) parts.push({ inline_data: { mime_type: 'application/pdf', data: o.pdfBase64 } })
       parts.push({ text: o.prompt })
-      const body: any = {
-        contents: [{ role: 'user', parts }],
-        generationConfig: { temperature, maxOutputTokens: maxTokens, responseMimeType: 'application/json' },
+      // Gemini 2.5 이후는 "생각" 토큰도 maxOutputTokens에 포함되므로 상한을 넉넉히 둡니다
+      const callGoogle = async (maxOutputTokens: number, thinkingBudget?: number) => {
+        const generationConfig: any = { temperature, maxOutputTokens, responseMimeType: 'application/json' }
+        if (thinkingBudget !== undefined) generationConfig.thinkingConfig = { thinkingBudget }
+        const body: any = { contents: [{ role: 'user', parts }], generationConfig }
+        if (o.system) body.systemInstruction = { parts: [{ text: o.system }] }
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${c.model}:generateContent`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': c.key }, body: JSON.stringify(body), signal: o.signal,
+        }).catch(netFail)
+        await check(res)
+        return res.json()
       }
-      if (o.system) body.systemInstruction = { parts: [{ text: o.system }] }
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${c.model}:generateContent`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': c.key }, body: JSON.stringify(body), signal: o.signal,
-      }).catch(netFail)
-      await check(res)
-      const data = await res.json()
-      if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new LLMError(TRUNCATED)
-      const text = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('') ?? ''
+      let data = await callGoogle(Math.max(maxTokens * 4, 32768))
+      if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+        // 생각이 상한을 다 쓴 경우: 생각 예산을 0으로 두고 한 번 더 (지원하지 않는 모델이면 예산 없이 재시도)
+        try {
+          data = await callGoogle(65536, 0)
+        } catch (e) {
+          if (e instanceof LLMError && e.status === 400) data = await callGoogle(65536)
+          else throw e
+        }
+        if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new LLMError(TRUNCATED)
+      }
+      const text = data?.candidates?.[0]?.content?.parts?.filter((p: any) => !p.thought).map((p: any) => p.text ?? '').join('') ?? ''
       if (!text) throw new LLMError(data?.promptFeedback?.blockReason ? `요청이 차단되었습니다: ${data.promptFeedback.blockReason}` : 'AI 응답이 비어 있습니다')
       return text
     }
