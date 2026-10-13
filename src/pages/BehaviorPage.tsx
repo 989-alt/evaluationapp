@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Alert, Card, CopyText, IssueList, PageHeader, Progress, Spinner, Stat, toast } from '@/components/ui'
 import { useClient, useStore } from '@/store'
 import { asArray, generateJSON } from '@/llm/provider'
-import { behaviorPrompt, SYSTEM_TEACHER } from '@/llm/prompts'
+import { behaviorExpandPrompt, behaviorPrompt, SYSTEM_TEACHER } from '@/llm/prompts'
 import { downloadXlsx } from '@/lib/excel'
 import { hasErrors, validateComment, type Issue } from '@/lib/validate'
 import { BEHAVIOR_EXTRA_BYTES } from '@/lib/neis'
@@ -157,6 +157,31 @@ export default function BehaviorPage() {
     void run(targets, ctrl, client)
   }
 
+  /** 목표보다 60B 넘게 짧은 문단은 한 번 더 요청해 보강합니다(실패하면 원문 유지) */
+  const expandShort = async (items: BehaviorResult[], c: NonNullable<typeof client>, signal: AbortSignal): Promise<BehaviorResult[]> => {
+    const { behaviorBytes, ending } = useStore.getState().settings
+    const short = items.filter((i) => neisBytes(i.text) < behaviorBytes - 60)
+    if (!short.length || signal.aborted) return items
+    try {
+      setMessage(`분량 보강 중… (${short.map((s) => s.student).join(', ')}번)`)
+      const out = await generateJSON<unknown>(c, {
+        system: SYSTEM_TEACHER,
+        prompt: behaviorExpandPrompt(short.map((s) => ({ id: s.student, text: s.text })), behaviorBytes, ending),
+        temperature: 0.7,
+        maxTokens: 8000,
+        signal,
+      })
+      const fixed = new Map(parseBatch(out).map((p) => [p.id, p.text]))
+      return items.map((i) => {
+        const t = fixed.get(i.student)
+        // 보강 결과가 원문보다 길 때만 채택
+        return t && neisBytes(t) > neisBytes(i.text) ? { ...i, text: t } : i
+      })
+    } catch {
+      return items
+    }
+  }
+
   const run = async (targets: BehaviorStudent[], ctrl: AbortController, c: NonNullable<typeof client>) => {
     const batches: BehaviorStudent[][] = []
     for (let i = 0; i < targets.length; i += BATCH) batches.push(targets.slice(i, i + BATCH))
@@ -203,8 +228,9 @@ export default function BehaviorPage() {
         }
         const parsed = parseBatch(out)
         const allowed = new Set(batch.map((s) => s.id))
-        const items: BehaviorResult[] = []
+        let items: BehaviorResult[] = []
         for (const p of parsed) if (allowed.has(p.id) && !items.some((i) => i.student === p.id)) items.push({ student: p.id, text: p.text })
+        items = await expandShort(items, c, ctrl.signal)
         mergeResults(items)
         got += items.length
         missing = [...missing, ...batch.filter((s) => !items.some((i) => i.student === s.id)).map((s) => s.id)]
@@ -251,7 +277,7 @@ export default function BehaviorPage() {
       })
       const hit = parseBatch(out).find((p) => p.id === n) ?? parseBatch(out)[0]
       if (!hit) throw new Error('AI 응답에서 문장을 찾지 못했습니다')
-      mergeResults([{ student: n, text: hit.text }])
+      mergeResults(await expandShort([{ student: n, text: hit.text }], client, ctrl.signal))
       setError('')
       toast(`${n}번을 다시 생성했습니다`)
     } catch (e) {

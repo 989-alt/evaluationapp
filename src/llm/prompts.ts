@@ -105,20 +105,41 @@ ${avoid.length ? `4. 다음 문장들은 다른 학생에게 이미 쓴 문장�
 }
 
 export function behaviorPrompt(students: Array<{ id: number; traits: Array<{ name: string; status: string }> }>, targetBytes: number, ending: '함' | '하였음') {
-  const minChars = Math.floor((targetBytes - 60) / 3)
-  const maxChars = Math.floor((targetBytes + 90) / 3)
+  // 모델은 요청 분량보다 짧게 쓰는 경향이 있어 범위를 목표의 위쪽에 둡니다
+  const minChars = Math.ceil(targetBytes / 3)
+  const maxChars = Math.ceil((targetBytes + 150) / 3)
+  const sentences = Math.max(4, Math.round(targetBytes / 110))
   return `담임 교사로서 학생별 "행동특성 및 종합의견"을 작성하세요. 학생은 출석번호로만 구분합니다.
 
 [데이터]
 ${JSON.stringify(students, null, 1)}
 
 [규칙]
-1. 분량: 공백 포함 ${minChars}~${maxChars}자 (한글 1자 = 3Byte 기준 약 ${targetBytes}Byte).
+1. 분량: 공백 포함 반드시 ${minChars}자 이상 ${maxChars}자 이하 (한글 1자 = 3Byte 기준 ${targetBytes}~${targetBytes + 150}Byte). 대략 ${sentences}~${sentences + 2}문장이 됩니다. ${minChars}자에 못 미치면 구체적인 행동 사례나 성장 모습을 한 문장 더 덧붙여 채웁니다. 출력 전에 글자 수를 세어 확인하세요.
 2. 긍정(status "긍정") 특성은 구체적 행동 사례와 함께 서술하고, 지도필요(status "지도필요") 특성은 성장 가능성을 담아 완곡하게 서술합니다. 학습·인성·예체능 순으로 자연스럽게 잇습니다.
 3. ${endingRule(ending)}
 ${COMMON_RULES}
 4. 학생마다 서로 다른 표현을 사용합니다. 같은 문장을 반복하지 않습니다.
 5. 특성 이름을 그대로 옮겨 적지 말고 행동으로 풀어 씁니다.
+
+[출력(JSON만)]
+{ "items": [{ "id": 1, "text": "..." }] }`
+}
+
+/** 목표 분량에 못 미친 행발 문단을 내용은 유지한 채 보강합니다 */
+export function behaviorExpandPrompt(items: Array<{ id: number; text: string }>, targetBytes: number, ending: '함' | '하였음') {
+  const minChars = Math.ceil(targetBytes / 3)
+  const maxChars = Math.ceil((targetBytes + 150) / 3)
+  return `다음 "행동특성 및 종합의견" 문단들은 분량이 부족합니다. 각 문단을 공백 포함 ${minChars}~${maxChars}자(약 ${targetBytes}Byte)가 되도록 보강하세요.
+
+[문단]
+${JSON.stringify(items, null, 1)}
+
+[규칙]
+1. 이미 있는 내용과 어조는 그대로 두고, 같은 특성에 대한 구체적인 행동 사례나 성장 모습을 문장으로 덧붙여 분량을 채웁니다. 새로운 특성을 지어내지 않습니다.
+2. 반드시 ${minChars}자 이상이 되게 합니다. 출력 전에 글자 수를 세어 확인하세요.
+3. ${endingRule(ending)}
+${COMMON_RULES}
 
 [출력(JSON만)]
 { "items": [{ "id": 1, "text": "..." }] }`
