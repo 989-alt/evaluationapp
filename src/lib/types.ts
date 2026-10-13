@@ -56,7 +56,8 @@ export interface Settings {
   sentencesPerStandard: 1 | 2
   behaviorBytes: number
   /** 교과 평어 한 교과 문단의 목표 바이트(한 번 생성 기준) */
-  subjectBytes: number
+  /** 예전 설정 호환용. 교과 평어는 분량 목표 없이 성취기준당 문장 수로만 씁니다 */
+  subjectBytes?: number
   persistResults: boolean
   guideSeen: boolean
 }
