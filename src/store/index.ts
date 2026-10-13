@@ -75,6 +75,8 @@ interface State {
   // NEIS handoff
   neisPayloads: NeisPayload[]
   setNeisPayloads: (p: NeisPayload[]) => void
+  /** 지정한 종류의 기존 데이터를 지우고 새 데이터를 뒤에 붙입니다 */
+  stageNeisPayloads: (kinds: NeisPayload['kind'][], payloads: NeisPayload[]) => void
 
   resetAll: () => void
 }
@@ -178,6 +180,8 @@ export const useStore = create<State>()(
 
       neisPayloads: [],
       setNeisPayloads: (neisPayloads) => set({ neisPayloads }),
+      stageNeisPayloads: (kinds, payloads) =>
+        set((s) => ({ neisPayloads: [...s.neisPayloads.filter((p) => !kinds.includes(p.kind)), ...payloads] })),
 
       resetAll: () => {
         localStorage.removeItem('saenggibu-v2')

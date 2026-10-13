@@ -109,6 +109,7 @@ export default function GradesPage() {
   })
   const canResume = remaining.length > 0 && entered.some((n) => results.some((r) => r.student === n))
   const failed = entered.filter((n) => results.find((r) => r.student === n)?.error).length
+  const okCount = results.filter((r) => !r.error).length
   // 이어서 생성은 처음 실행한 문장 수를 따릅니다
   const runSentences = results.find((r) => !r.error && r.sentences && entered.includes(r.student))?.sentences
   const liveChecked = [...checked].filter((n) => n <= N)
@@ -511,6 +512,9 @@ export default function GradesPage() {
               {failed > 0 && <div className="text-[12px] text-accent mt-1">오류가 난 학생 {failed}명 · "이어서 생성"으로 다시 시도할 수 있습니다</div>}
               {error && <div className="text-[12px] text-accent mt-1">{error} {!client && <Link to="/settings" className="underline">설정으로 가기</Link>}</div>}
             </div>
+            {okCount > 0 && (
+              <Link to="/results" className="btn !bg-transparent !text-white !border-white/30 hover:!border-white">결과 보기 ({okCount}명)</Link>
+            )}
             <label className="flex items-center gap-2 text-[13px] cursor-pointer">
               <input type="checkbox" checked={two} onChange={(e) => setTwo(e.target.checked)} className="w-4 h-4 accent-accent" />
               성취기준당 2문장

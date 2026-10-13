@@ -6,9 +6,9 @@ import { asArray, generateJSON } from '@/llm/provider'
 import { behaviorExpandPrompt, behaviorPrompt, SYSTEM_TEACHER } from '@/llm/prompts'
 import { downloadXlsx } from '@/lib/excel'
 import { hasErrors, validateComment, type Issue } from '@/lib/validate'
-import { BEHAVIOR_EXTRA_BYTES } from '@/lib/neis'
+import { BEHAVIOR_EXTRA_BYTES, buildBehaviorPayload } from '@/lib/neis'
 import { flatten, hash, neisBytes, sleep } from '@/lib/text'
-import type { BehaviorResult, BehaviorStudent, NeisPayload } from '@/lib/types'
+import type { BehaviorResult, BehaviorStudent } from '@/lib/types'
 
 const CATEGORIES: Array<{ key: string; label: string; traits: string[] }> = [
   { key: 'study', label: '학습', traits: ['학습(우수)', '학습(발전가능)', '학습(제안)'] },
@@ -43,7 +43,7 @@ export default function BehaviorPage() {
   const setStudents = useStore((s) => s.setBehaviorStudents)
   const results = useStore((s) => s.behaviorResults)
   const setResults = useStore((s) => s.setBehaviorResults)
-  const setNeisPayloads = useStore((s) => s.setNeisPayloads)
+  const stageNeisPayloads = useStore((s) => s.stageNeisPayloads)
 
   const target = settings.behaviorBytes
   const maxBytes = target + MAX_EXTRA
@@ -315,16 +315,14 @@ export default function BehaviorPage() {
     )
   }
   const sendNeis = () => {
-    const rows = shown.filter((r) => r.text.trim()).map((r) => ({ student: r.student, text: r.text.trim() }))
-    if (!rows.length) return toast('나이스로 보낼 문장이 없습니다')
+    const payload = buildBehaviorPayload(shown)
+    if (!payload) return toast('나이스로 보낼 문장이 없습니다')
     const errs = shown.filter((r) => hasErrors(issuesOf(r.student))).length
     const notes: string[] = []
     if (running) notes.push('아직 생성 중입니다. 지금까지 끝난 학생만 담습니다.')
     if (errs) notes.push(`검사 오류(바이트 초과·허용되지 않는 문자 등)가 있는 ${errs}명이 함께 담깁니다.`)
     if (notes.length && !confirm(`${notes.join('\n')}\n그대로 나이스 입력 목록에 담을까요?`)) return
-    const payload: NeisPayload = { version: 1, createdAt: Date.now(), kind: 'behavior', rows }
-    const st = useStore.getState()
-    setNeisPayloads([...st.neisPayloads.filter((p) => p.kind !== 'behavior'), payload])
+    stageNeisPayloads(['behavior'], [payload])
     navigate('/neis')
   }
 

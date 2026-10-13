@@ -1,4 +1,5 @@
-import { LEVEL_SHORT, type EvalPlan, type NeisPayload, type Standard, type StudentResult } from './types'
+import { LEVEL_SHORT, type BehaviorResult, type CreativeAssign, type EvalPlan, type NeisPayload, type Standard, type StudentResult } from './types'
+import { flatten } from './text'
 import type { ValidateOptions } from './validate'
 
 /**
@@ -50,6 +51,30 @@ export function buildSubjectPayloads(plan: EvalPlan | null, results: StudentResu
       rows.push({ student: r.student, text, standards })
     }
     if (rows.length) out.push({ version: 1, createdAt, kind: 'subject', subject, rows })
+  }
+  return out
+}
+
+/** 행동특성 나이스 입력 데이터. 빈 문장은 빼고 번호순으로 담습니다. 담을 문장이 없으면 null */
+export function buildBehaviorPayload(results: BehaviorResult[]): NeisPayload | null {
+  const rows = results
+    .filter((r) => r.text.trim())
+    .sort((a, b) => a.student - b.student)
+    .map((r) => ({ student: r.student, text: r.text.trim() }))
+  if (!rows.length) return null
+  return { version: 1, createdAt: Date.now(), kind: 'behavior', rows }
+}
+
+/**
+ * 창체 나이스 입력 데이터. 영역마다 payload 1개(subject = 영역 이름).
+ * `areaOrder` 순서대로, `students` 번호 중 배정한 문장이 있는 학생만 담습니다(줄바꿈·연속 공백은 합침).
+ */
+export function buildCreativePayloads(assign: CreativeAssign, areaOrder: string[], students: number[]): NeisPayload[] {
+  const createdAt = Date.now()
+  const out: NeisPayload[] = []
+  for (const area of areaOrder) {
+    const rows = students.map((n) => ({ student: n, text: flatten(assign[area]?.[n] ?? '') })).filter((r) => r.text)
+    if (rows.length) out.push({ version: 1, createdAt, kind: 'creative', subject: area, rows })
   }
   return out
 }

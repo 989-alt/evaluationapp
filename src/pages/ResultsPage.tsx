@@ -4,9 +4,10 @@ import { Alert, Card, CopyText, IssueList, LevelPill, PageHeader, Progress, Spin
 import { useActivePlan, useClient, useStore } from '@/store'
 import { abortGeneration, buildStudentInput, generateStudents, genState, useGenState } from '@/llm/generateModeB'
 import { validateComment, hasErrors, type Issue } from '@/lib/validate'
-import { downloadXlsx } from '@/lib/excel'
+import { downloadXlsx, uniqueSheetName } from '@/lib/excel'
 import { buildSubjectPayloads, neisByteLimit } from '@/lib/neis'
 import { flatten, hash, neisBytes, splitSentences } from '@/lib/text'
+import { ModeSwitch } from './CommentsPage'
 import { LEVEL_SHORT, type Standard, type StudentResult, type SubjectComment } from '@/lib/types'
 
 type View = 'student' | 'subject'
@@ -37,14 +38,6 @@ function sentencesOf(r: StudentResult | undefined, fallback: 1 | 2): 1 | 2 {
   return s / k >= 2 ? 2 : 1 // 내림: 2문장 이상일 때만 2
 }
 
-function sheetName(name: string, used: Set<string>) {
-  const base = name.replace(/[:\\/?*[\]]/g, ' ').trim().slice(0, 28).replace(/^'+|'+$/g, '').trim() || '교과'
-  let n = base
-  for (let i = 2; used.has(n); i++) n = `${base} ${i}`
-  used.add(n)
-  return n
-}
-
 function StandardList({ sc, stdById }: { sc: SubjectComment; stdById: Map<string, Standard> }) {
   return (
     <ul className="m-0 p-0 list-none flex flex-col gap-1.5">
@@ -72,7 +65,7 @@ export default function ResultsPage() {
   const N = useStore((s) => s.studentCount)
   const results = useStore((s) => s.results)
   const updateSubjectText = useStore((s) => s.updateSubjectText)
-  const setNeisPayloads = useStore((s) => s.setNeisPayloads)
+  const stageNeisPayloads = useStore((s) => s.stageNeisPayloads)
   const clearResults = useStore((s) => s.clearResults)
 
   const [view, setView] = useState<View>('student')
@@ -218,7 +211,7 @@ export default function ResultsPage() {
         if (!sc || !sc.text.trim()) continue
         rows.push({ 번호: r.student, 수준: levelText(sc), 평어: sc.text, Bytes: neisBytes(sc.text) })
       }
-      if (rows.length) sheets.push({ name: sheetName(subject, used), rows })
+      if (rows.length) sheets.push({ name: uniqueSheetName(subject, used, '교과'), rows })
     }
     const byStudent = okResults.map((r) => {
       const row: Record<string, string | number> = { 번호: r.student }
@@ -246,7 +239,7 @@ export default function ResultsPage() {
     if (errResults.length) notes.push(`생성 오류 ${errResults.length}명은 제외됩니다.`)
     if (errorParas) notes.push(`검사 오류(이름·허용되지 않는 문자 등)가 있는 문단 ${errorParas}개가 함께 담깁니다.`)
     if (notes.length && !confirm(`${notes.join('\n')}\n그대로 나이스 입력 목록에 담을까요?`)) return
-    setNeisPayloads([...st.neisPayloads.filter((p) => p.kind !== 'subject'), ...payloads])
+    stageNeisPayloads(['subject'], payloads)
     navigate('/neis')
   }
 
@@ -255,11 +248,14 @@ export default function ResultsPage() {
       eyebrow="STEP 3 · 결과 · 방식 B"
       title={<>검사를 통과한 문장만<br />나이스로 보냅니다</>}
       aside={
-        <div className="flex gap-7">
-          <Stat label="학생" value={okResults.length} of={Math.max(N, okResults.length)} />
-          <Stat label="교과 문단" value={paragraphs.length} />
-          <Stat label="검사 통과" value={passCount} cls="text-lv0-ink" />
-          <Stat label="확인 필요" value={needCount} cls="text-lv2-ink" />
+        <div className="flex flex-col items-end gap-5">
+          <ModeSwitch mode="R" />
+          <div className="flex gap-7">
+            <Stat label="학생" value={okResults.length} of={Math.max(N, okResults.length)} />
+            <Stat label="교과 문단" value={paragraphs.length} />
+            <Stat label="검사 통과" value={passCount} cls="text-lv0-ink" />
+            <Stat label="확인 필요" value={needCount} cls="text-lv2-ink" />
+          </div>
         </div>
       }
     />

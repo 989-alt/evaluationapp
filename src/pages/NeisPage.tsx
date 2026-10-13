@@ -97,8 +97,9 @@ export default function NeisPage() {
         </div>
         {payloads.length === 0 ? (
           <div className="rounded-[14px] bg-surface-2 px-5 py-8 text-center">
-            <p className="m-0 mb-3 text-ink-2">아직 보낼 데이터가 없습니다 — 결과 페이지에서 '나이스로 보내기'를 누르면 여기 쌓입니다</p>
+            <p className="m-0 mb-3 text-ink-2">아직 보낼 데이터가 없습니다 — 모아보기나 결과 페이지에서 '나이스로 보내기'를 누르면 여기 쌓입니다</p>
             <div className="flex justify-center gap-2">
+              <Link to="/collect" className="btn-primary !px-4 !py-1.5 text-[13px]">모아보기로</Link>
               <Link to="/results" className="btn btn-sm">교과 결과로</Link>
               <Link to="/behavior" className="btn btn-sm">행동특성으로</Link>
             </div>

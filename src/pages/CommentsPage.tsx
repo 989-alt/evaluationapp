@@ -9,11 +9,14 @@ import { downloadXlsx } from '@/lib/excel'
 import { LEVEL_KEYS, LEVEL_NAMES, type ModeAResult } from '@/lib/types'
 import { hash, sleep } from '@/lib/text'
 
-export function ModeSwitch({ mode }: { mode: 'A' | 'B' }) {
+/** 평어 생성 화면 전환. "결과"는 방식 B로 만든 평어(오류 제외 학생 수)로 돌아가는 길입니다 */
+export function ModeSwitch({ mode }: { mode: 'A' | 'B' | 'R' }) {
+  const n = useStore((s) => s.results.filter((r) => !r.error).length)
   return (
     <div className="seg">
       <Link to="/comments" className={`seg-item ${mode === 'A' ? 'seg-item-on' : ''}`}>방식 A · 성취기준별 예시</Link>
       <Link to="/grades" className={`seg-item ${mode === 'B' ? 'seg-item-on' : ''}`}>방식 B · 학생별 성적 → 평어</Link>
+      <Link to="/results" className={`seg-item ${mode === 'R' ? 'seg-item-on' : ''}`}>{n ? `결과 · ${n}명` : '결과'}</Link>
     </div>
   )
 }

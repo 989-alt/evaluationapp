@@ -6,9 +6,9 @@ import { asArray, generateJSON } from '@/llm/provider'
 import { creativePrompt, SYSTEM_TEACHER } from '@/llm/prompts'
 import { downloadXlsx } from '@/lib/excel'
 import { hasErrors, validateComment } from '@/lib/validate'
-import { neisByteLimit } from '@/lib/neis'
+import { buildCreativePayloads, neisByteLimit } from '@/lib/neis'
 import { flatten, hash, neisBytes } from '@/lib/text'
-import type { CreativeInput, CreativeResult, NeisPayload } from '@/lib/types'
+import type { CreativeInput, CreativeResult } from '@/lib/types'
 
 const CREATIVE_LIMIT = neisByteLimit('creative', 0)
 const BASE_AREAS = ['자율', '동아리', '진로'] as const
@@ -39,7 +39,7 @@ export default function CreativePage() {
   const setAssign = useStore((s) => s.setCreativeAssign)
   const setAssignBulk = useStore((s) => s.setCreativeAssignBulk)
   const clearAssign = useStore((s) => s.clearCreativeAssign)
-  const setNeisPayloads = useStore((s) => s.setNeisPayloads)
+  const stageNeisPayloads = useStore((s) => s.stageNeisPayloads)
   const [tab, setTab] = useState<string>('자율')
   const setResults = useStore((s) => s.setCreativeResults)
 
@@ -143,19 +143,13 @@ export default function CreativePage() {
     .map((a) => `${a} ${filledCount(a)}명`).join(' · ')
   const totalAssigned = tabs.reduce((a, t) => a + filledCount(t), 0)
   const sendNeis = () => {
-    const createdAt = Date.now()
-    const payloads: NeisPayload[] = []
-    let errs = 0
-    for (const a of tabs) {
-      const rows = students.map((n) => ({ student: n, text: flatten(textOf(a, n)) })).filter((r) => r.text)
-      if (!rows.length) continue
-      rows.forEach((r, i) => { if (hasErrors(validateComment(r.text, { others: rows.filter((_, j) => j !== i).map((x) => x.text) }))) errs++ })
-      payloads.push({ version: 1, createdAt, kind: 'creative', subject: a, rows })
-    }
+    const payloads = buildCreativePayloads(assign, tabs, students)
     if (!payloads.length) return toast('나이스로 보낼 배정이 없습니다')
+    let errs = 0
+    for (const p of payloads)
+      p.rows.forEach((r, i) => { if (hasErrors(validateComment(r.text, { others: p.rows.filter((_, j) => j !== i).map((x) => x.text) }))) errs++ })
     if (errs && !confirm(`검사 오류(허용되지 않는 문자·이름 의심 등)가 있는 ${errs}명이 함께 담깁니다.\n그대로 나이스 입력 목록에 담을까요?`)) return
-    const st = useStore.getState()
-    setNeisPayloads([...st.neisPayloads.filter((p) => p.kind !== 'creative'), ...payloads])
+    stageNeisPayloads(['creative'], payloads)
     navigate('/neis')
   }
 
