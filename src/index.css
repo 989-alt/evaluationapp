@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", system-ui, sans-serif;
+
+  --color-ground: #f6f4ef;
+  --color-rail: #f1eee6;
+  --color-surface: #ffffff;
+  --color-surface-2: #fbfaf7;
+  --color-line: #e8e4db;
+  --color-line-2: #f1eee6;
+  --color-ink: #141414;
+  --color-ink-2: #3e3b35;
+  --color-muted: #6b6760;
+  --color-muted-2: #b9b5ac;
+  --color-accent: #ff5a1f;
+  --color-accent-2: #e04a12;
+  --color-copied: #c0392b;
+
+  --color-lv0-ink: #0f6b45;
+  --color-lv0-tint: #d7f2e3;
+  --color-lv1-ink: #1d4f9e;
+  --color-lv1-tint: #dce9fb;
+  --color-lv2-ink: #8a4f08;
+  --color-lv2-tint: #fbe5cc;
+  --color-lv3-ink: #9a2b36;
+  --color-lv3-tint: #f9d9dc;
+
+  --radius-card: 20px;
+  --radius-field: 12px;
+}
+
+html, body, #root { height: 100%; }
+body { margin: 0; background: var(--color-ground); color: var(--color-ink); font-family: var(--font-sans); font-size: 14px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+input, select, textarea, button { font: inherit; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+@layer components {
+  .card { @apply bg-surface rounded-[var(--radius-card)]; }
+  .eyebrow { @apply text-[12px] font-bold text-accent tracking-[0.08em]; }
+  .h1 { @apply text-[34px] md:text-[40px] font-light tracking-[-0.02em] leading-[1.15] m-0; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 border border-line bg-surface text-ink cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed hover:border-ink; }
+  .btn-primary { @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 bg-ink text-white font-bold cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed hover:bg-black; }
+  .btn-accent { @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 bg-accent text-white font-bold cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed hover:bg-accent-2; }
+  .btn-sm { @apply px-3 py-1.5 text-[13px]; }
+  .field { @apply w-full rounded-[var(--radius-field)] border border-line bg-surface px-3.5 py-2.5 outline-none focus:border-ink; }
+  .pill { @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-bold; }
+  .seg { @apply inline-flex p-1 rounded-full bg-surface gap-1; }
+  .seg-item { @apply rounded-full px-4 py-2 text-ink cursor-pointer; }
+  .seg-item-on { @apply bg-ink text-white font-bold; }
+}
+
+.lv-0 { background: var(--color-lv0-tint); color: var(--color-lv0-ink); }
+.lv-1 { background: var(--color-lv1-tint); color: var(--color-lv1-ink); }
+.lv-2 { background: var(--color-lv2-tint); color: var(--color-lv2-ink); }
+.lv-3 { background: var(--color-lv3-tint); color: var(--color-lv3-ink); }
+
+.toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); opacity: 0; transition: all .25s; background: #141414; color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 13px; pointer-events: none; z-index: 60; }
+.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+.spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
+.spinner.dark { border-color: rgba(20,20,20,.2); border-top-color: #141414; }
+@keyframes spin { to { transform: rotate(360deg); } }
