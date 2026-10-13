@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI 생기부 보조 생성기 → 나이스",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI 생기부 보조 생성기 웹앱에서 만든 교과 평어·행동특성·창체 특기사항을 나이스 화면에 번호순으로 자동 입력합니다. 학생 이름은 읽지 않고 서버와 통신하지 않습니다.",
   "minimum_chrome_version": "116",
   "permissions": [

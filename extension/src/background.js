@@ -14,7 +14,7 @@ function isAppUrl(url) {
   }
 }
 const SCAN_MAX_BYTES = 300 * 1024
-const TIMEOUT = { ping: 1500, detect: 15000, scan: 15000, fill: 11 * 60 * 1000, stop: 3000 }
+const TIMEOUT = { ping: 1500, detect: 15000, scan: 15000, inspect: 20000, fill: 11 * 60 * 1000, stop: 3000 }
 const KINDS = ['subject', 'behavior', 'creative']
 
 // ---------- 데이터 ----------
@@ -186,7 +186,7 @@ async function runCommand(tabId, cmd, args) {
     await Promise.all(frames.map((f) => frameCall(tabId, f.frameId, 'stop')))
     return { ok: true }
   }
-  if (cmd === 'fill') {
+  if (cmd === 'fill' || cmd === 'inspect') {
     const startedAt = Date.now()
     let frameId = await recallFrame(tabId)
     if (frameId == null) {
@@ -194,12 +194,13 @@ async function runCommand(tabId, cmd, args) {
       if (d.error || d.frameId == null) return { error: d.error || 'no-screen' }
       frameId = d.frameId
     }
-    let result = await frameCall(tabId, frameId, 'fill', args)
+    let result = await frameCall(tabId, frameId, cmd, args)
     if (result && /Could not establish connection|Receiving end does not exist|No frame/i.test(String(result.error || ''))) {
       // 화면이 바뀌어 기억한 프레임이 없어진 경우: 다시 인식하고 한 번 더
       const d = await detect(tabId, { screen: args && args.screen })
-      if (!d.error && d.frameId != null) result = await frameCall(tabId, d.frameId, 'fill', args)
+      if (!d.error && d.frameId != null) result = await frameCall(tabId, d.frameId, cmd, args)
     }
+    if (cmd === 'inspect') return result // 인식 검사는 쓰지 않으므로 마지막 결과로 남기지 않습니다
     // 시간 초과 같은 오류가 content script의 정상 결과(fill-done)를 덮어쓰지 않게 합니다
     const prev = (await chrome.storage.local.get('lastRun')).lastRun
     if (!result.error || !prev || prev.at < startedAt) await chrome.storage.local.set({ lastRun: { at: Date.now(), tabId, result } })

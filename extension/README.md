@@ -27,8 +27,11 @@
 1. 나이스에 로그인하고 입력할 화면을 연 다음 **조회**를 누릅니다.
 2. 그 탭에서 확장 아이콘을 누르면 **화면** 카드에 인식한 화면 이름이 나옵니다. 잘못 인식하면 **화면 지정**에서 직접 고릅니다.
 3. **입력** 카드에서 데이터를 고르고 **빈 칸만 / 덮어쓰기**를 정합니다. 교과는 **과목**, 창체(학생부자료기록)는 **데이터와 영역**을 직접 골라야 자동 입력 버튼이 켜집니다.
-4. 먼저 **미리보기(저장 안 함)**로 넣어 보고 화면에서 확인합니다. 괜찮으면 **자동 입력 ▶**(입력 후 저장 누르기)를 누릅니다.
-5. 결과에 **못 찾은 번호**가 나오면 그 학생은 직접 입력합니다. 표가 길어 스크롤되는 화면이면 아래로 내린 뒤 **빈 칸만**으로 한 번 더 실행합니다.
+4. **인식 검사**를 누르면 나이스 칸은 바꾸지 않고 어떤 화면(앱)을 쓰는지, 학생·성취기준을 몇 개 찾았는지, 교과평가의 단계 코드를 보여 줍니다.
+5. 먼저 **미리보기(저장 안 함)**로 넣어 보고 화면에서 확인합니다. 괜찮으면 **자동 입력 ▶**(입력 후 저장 누르기)를 누릅니다.
+6. 결과에 **못 찾은 번호**가 나오면 그 학생은 직접 입력합니다. 화면(DOM) 방식으로 입력했고 표가 길어 스크롤되는 화면이면 아래로 내린 뒤 **빈 칸만**으로 한 번 더 실행합니다. (아래 표의 여섯 화면은 나이스 데이터에 바로 넣으므로 스크롤과 상관없이 모든 행에 들어갑니다.)
+
+나이스는 연 화면을 위쪽 탭(MDI)으로 모두 열어 둡니다. 확장은 **지금 보이는 탭의 화면**에만 입력합니다. 화면을 잘못 알아보면 쓰지 않는 탭을 닫고 **화면 다시 인식**을 누르세요.
 
 입력 중에는 나이스 화면에서 **아무 키나 누르거나 중지**를 누르면 멈추며, 멈추면 저장은 누르지 않습니다.
 
@@ -54,6 +57,33 @@
 6. 영역 **진로활동** → 자동 입력
 7. **저장**
 
+## 실제 나이스 매핑 현황 (0.2.0)
+
+2026년 10월 실제 나이스(4세대, eXBuilder6 cpr 1.0.6135) 구조 수집 7개로 확인한 내용입니다. 표는 모두 `grdMain`, 저장 버튼은 모두 `btnSave`입니다. 앱 id 뒤의 `$1`·`$2`(탭을 연 순서)는 무시하고 비교합니다.
+
+| 화면 | 앱 id | 번호 | 넣는 열 (편집 칸) | 그 밖의 열 |
+|---|---|---|---|---|
+| 교과평가 | `edu/sw/els/scr/es/els_scres00_m02` | `clsNo` | 단계 `evlCtrCd` (콤보 `cmbLvl`), 평가결과 `evlCtrCn` (`txa1`) | 과목 `sbjtNm`, 영역 `relmNm`, 성취기준 `sccesCtrCd`/`sccesCtrCn` |
+| 학기말종합의견 | `edu/sw/els/scr/es/els_scres10_m00` | `stdntCn`/`stdntInfo` 중 숫자만 있는 열의 마지막 숫자 | 종합의견 `gnrlzOpiCn` (`txaGnrlzOpiCn`) | 과목 `sbjtCdNm` (과목 확인) |
+| 행동특성 및 종합의견 | `edu/sw/els/sdl/bg/els_sdlbg00_m00` | `clsNo` | `gnrlzOpiCn` (`txaGnrlz`) | 마감 `ddlnYn`/`msDdlnYn` (Y면 입력 거부) |
+| 학생부자료기록 (창체) | `edu/sw/els/sdl/ce/els_sdlce06_m00` | `clsNo` | 특기사항 `speclActSpablMteCn` (`txaSpeclActSpablMteCn`) | 영역 `actScNm` (학생마다 5행) |
+| 동아리활동관리 | `edu/sw/els/sdl/ce/els_sdlce01_m06` | `clsNo` | `speclActSpablMteCn` (`txaSpeclActSpablMteCn`) | 학년 `grd`·반 `clsNm` (반 섞임 확인) |
+| 진로활동관리 | `edu/sw/els/sdl/ce/els_sdlce04_m00` | `clsNo` | `speclActSpablMteCn` (`txaSpeclActSpablMteCn`) | 희망분야 `stuHopMteCn`은 읽지도 쓰지도 않음 |
+
+- 글자수(`length`)는 나이스가 계산하므로 쓰지 않습니다.
+- 교과평가의 단계는 `cmbLvl` 항목에서 글자(매우잘함·잘함·보통·노력요함, 띄어쓰기 무시)에 맞는 **코드**를 찾아 넣습니다. 코드를 못 찾으면 짐작하지 않고 입력을 멈춥니다. 단계를 넣은 뒤 평가결과가 비어 있으면(또는 덮어쓰기면) 데이터의 평가결과를 넣습니다.
+- 교과평가 바깥 탭 앱(`els_scres00_m00`)과 동아리 출결(`els_sdlce01_m05`)은 쓰지 않습니다.
+- 개인정보 열(`stuFlnm`, `stdntNm`, `stuBrdt`, `stdntInfo`, `sameFlnm`, `stuInvlNo`, `userId`, `stuHopMteCn`, `stuHopMteCnOri`, `sxdsScCd`, `clubActDptNm`)은 읽지 않습니다. `stdntInfo`는 학기말종합의견 번호를 찾을 때 **숫자만 있는 값**일 때만 쓰고 원문은 남기지 않습니다.
+
+아직 확인하지 못한 것 (다음 구조 수집·실제 입력으로 확인):
+
+1. `cmbLvl`의 실제 코드 값과 항목을 읽는 방법(항목 목록/데이터셋, 행마다 다른지). 구조 수집의 `known.apps[].levelComboItems`와 인식 검사의 "단계 코드"로 확인합니다.
+2. 데이터셋에 단계 코드를 넣었을 때 나이스가 평가결과를 채우는지(화면에서 고를 때만 채울 수 있음), 단계 이름 `evlCtrNm`도 같이 넣어야 하는지.
+3. 학기말종합의견의 번호가 `stdntCn`·`stdntInfo` 중 어디에 있는지 (둘 다 숫자만이 아니면 화면(DOM) 방식으로 보이는 행만 입력).
+4. `dataSet.setValue`로 바꾼 행이 저장 대상(수정 상태)으로 표시되는지. 구조 수집의 `rowStates`, 저장 후 다시 조회해서 확인합니다.
+5. 컨트롤 → 화면 요소를 찾는 API(`uuid`·`getElement` 등)와 MDI 선택 탭 API. 구조 수집의 `known.apps[].via`, `known.api`로 확인합니다.
+6. 동아리활동관리의 `scrgClsDdlnYn`(마감으로 보임)도 입력 거부 조건에 넣어야 하는지.
+
 ## 화면을 못 알아볼 때: 구조 수집
 
 나이스의 실제 화면 구조(컨트롤 이름 등)는 학교·시기마다 조금씩 다를 수 있습니다. 화면을 못 알아보거나 입력이 안 되면:
@@ -69,11 +99,12 @@
 - 화면 제목에서 찾은 **화면 이름 낱말**(예: "교과평가", "학기말 종합의견") — 제목 원문은 넣지 않습니다
 - cpr 앱 id와 (화면 이름 낱말로 줄인) 앱 제목
 - 표마다: **머리글 제목**(번호 · 성명 · 성취기준 같은 열 제목), 열 역할, 데이터 열 이름, 행 수, 앞 3행의 칸별 편집 가능 여부, **번호 열의 앞 3개 값**
+- 알려진 나이스 화면(위 표)마다: 보이는지 여부, 그리드·머리글·본문·데이터셋·콤보·버튼·MDI의 **메서드/속성 이름**(값 아님), 머리글/본문 열 정보(성명·개인정보 열 이름은 `[개인정보]`로 가림), 단계 콤보 항목(글자·코드), **앞 3행의 개인정보가 아닌 열 값**(번호 · 학년 · 반 · 과목 · 영역 · 성취기준 코드 · 단계 코드 · 활동 영역 · 마감 여부 등), 긴 글 칸은 **글자 수만**, `stdntCn`/`stdntInfo`는 숫자만 있을 때만(아니면 글자 수만), 행 상태
 - 컨트롤 목록: id, 종류, 스타일 클래스 이름, 연결된 데이터 열 이름
 - 화면 요소 통계: `cl-` 클래스별 개수, `data-ndid` 개수, iframe 개수, 요소 id·클래스 목록
 - 첫 표의 머리글 행 HTML (머리글 제목만 남기고 다른 글자는 `…`, 속성 값은 지움)
 
-**학생 이름, 입력 칸 내용, 표 밖의 화면 글자는 들어가지 않습니다.**
+**학생 이름·생년월일·학생 고유번호 같은 개인정보, 입력 칸 내용, 표 밖의 화면 글자는 들어가지 않습니다.**
 
 ## 개인정보
 
@@ -90,14 +121,16 @@ extension/
   src/app-bridge.js     웹앱 탭: saenggibu-neis → 서비스 워커
   src/background.js     서비스 워커: 저장 · 배지 · 팝업 ↔ 나이스 탭 중계 (프레임 고르기)
   src/neis-content.js   나이스 탭(모든 프레임): 명령 중계, 엔진 주입
-  src/neis-main.js      엔진 (MAIN world): window.__sgbNeis = { detect, scan, fill, stop }
+  src/neis-main.js      엔진 (MAIN world): window.__sgbNeis = { detect, scan, fill, inspect, stop }
   popup/                팝업 UI
   icons/                아이콘 (tools/make-icons.mjs로 생성)
-  test/mock-neis.html   모의 나이스 화면 6개 (?screen=교과평가 …, ?cpr=1 은 흉내 낸 cpr 런타임)
+  test/mock-neis.html   모의 나이스 화면 6개 (?screen=교과평가 …). ?cpr=1 은 실제 나이스 모양의 cpr 런타임
+                        (여섯 앱이 MDI로 동시에 있고 ?screen= 화면만 보임), ?cpr=legacy 는 1차 추정 모양
   test/app.html         웹앱 흉내 (bridge 테스트)
   test/run.mjs          Playwright 테스트
 ```
 
 - 테스트: 저장소 루트에서 `npm run test:ext` (= `xvfb-run -a node extension/test/run.mjs`). Playwright(`/opt/node22/lib/node_modules/playwright`)와 xvfb가 필요합니다. CI에서는 돌리지 않습니다.
-- 엔진은 eXBuilder6 런타임(`window.cpr`)이 있으면 그리드 API(`getCellValue`/`setCellValue`)로, 없거나 열을 못 찾으면 화면(DOM)에서 직접 입력합니다. 결과의 `strategy`가 어느 쪽인지 알려 줍니다.
+- 엔진은 위 표의 화면이 보이면 그 앱의 데이터셋(`getValue`/`setValue`)에 바로 넣고(`strategy: 'cpr-known'`), 다른 cpr 화면은 그리드 API(`'cpr'`), 그 밖에는 화면(DOM)에서 직접 입력합니다(`'dom'`). 결과의 `strategy`가 어느 쪽인지 알려 줍니다.
+- 엔진 버전(`neis-main.js`의 `VERSION`)과 `neis-content.js`의 `ENGINE_VERSION`, `manifest.json`의 `version`은 같아야 합니다(테스트가 확인). 다르면 나이스 탭을 새로고침하라고 안내합니다.
 - 아이콘 다시 만들기: `node extension/tools/make-icons.mjs`

@@ -161,9 +161,320 @@
   }
   document.getElementById('grid').innerHTML = html
 
-  // ?cpr=1: eXBuilder6 런타임(window.cpr)을 흉내 냅니다. API 모양은 추정이며(2차에서 실제 구조로 확인),
-  // 엔진의 cpr 경로가 일관되게 동작하는지와 성명 열을 읽지 않는지 확인하는 용도입니다.
-  if (new URLSearchParams(location.search).get('cpr') === '1') {
+  // ?cpr=1: 실제 나이스(eXBuilder6 1.0.6135) 모양을 흉내 낸 cpr 런타임 (2차 구조 수집 7개 기준).
+  // - MDI: 여섯 화면의 앱이 모두 동시에 있고 ?screen= 화면만 보입니다 (다른 탭은 display:none)
+  // - 실제 앱 id·데이터 열 이름, 머리글/본문 cellCount는 속성 + getColumn(i)
+  // - 표(DOM)는 앞 16행만 그립니다. 개인정보 열(성명 등)에는 가짜 값을 넣고 읽은 횟수를 셉니다
+  // 선택: ?noel=1 (컨트롤↔DOM 요소 연결 없음) ?nomdi=1 (MDI 선택 탭 못 읽음) ?lvl=none|row|itemset (단계 항목)
+  //       ?stdcode=internal (성취기준 코드 열이 내부 코드) ?closed=1 (행동특성 3번 마감) ?classes=2 (동아리 두 반)
+  //       ?semsubj=수학 (학기말 과목) ?dup=1 (숨은 진로 탭이 하나 더) ?numsrc=cn (학기말 번호가 stdntCn)
+  function buildRealCpr() {
+    const N = 21
+    const STU = Array.from({ length: N }, (_, i) => i + 1)
+    const pad = (n) => String(n).padStart(2, '0')
+    const fake = (s) => '가상학생' + pad(s)
+    const PERSONAL = ['stuFlnm', 'stdntNm', 'stuBrdt', 'stdntInfo', 'sameFlnm', 'stuInvlNo', 'userId', 'stuHopMteCn', 'stuHopMteCnOri', 'sxdsScCd', 'clubActDptNm']
+    const NOEL = Q.get('noel') === '1'
+    const LVL = Q.get('lvl') || 'items'
+    window.__personalReads = {}
+    window.__writeCols = {}
+    window.__saveByApp = {}
+    window.__saveClicks = 0
+    let uid = 0
+    const nextUuid = () => 'uuid-m' + (++uid).toString(36)
+
+    class DataSet {
+      constructor(cols, rows, onChange) {
+        this._cols = cols
+        this._rows = rows
+        this._states = rows.map(() => 0)
+        this._onChange = onChange
+      }
+      getColumnNames() { return this._cols.slice() }
+      getRowCount() { return this._rows.length }
+      getValue(r, c) {
+        if (PERSONAL.includes(c)) window.__personalReads[c] = (window.__personalReads[c] || 0) + 1
+        const row = this._rows[r]
+        return row ? row[c] : undefined
+      }
+      setValue(r, c, v) {
+        const row = this._rows[r]
+        if (!row || !this._cols.includes(c)) return false
+        row[c] = v
+        window.__writeCols[c] = (window.__writeCols[c] || 0) + 1
+        this._states[r] = 2
+        if (this._onChange) this._onChange(r, c, v, row)
+        return true
+      }
+      getRowState(r) { return this._states[r] }
+    }
+    const base = (s) => ({ shlCd: 'S0001', ayr: '2026', grd: '6', clsCd: '03', stuInvlNo: '90' + pad(s), stuFlnm: fake(s), stuBrdt: '2014-03-' + pad(s), sameFlnm: 'N' })
+    const rowsOf = (cols, list) => list.map((o) => Object.fromEntries(cols.map((c) => [c, o[c] ?? ''])))
+
+    const control = (type, id, extra = {}) => ({ type, id, ...extra })
+    function makeGrid(id, ds, headers, details, extra = {}) {
+      const grid = {
+        type: 'grid',
+        id,
+        dataSet: ds,
+        header: { cellCount: headers.length, getColumn: (i) => headers[i] },
+        detail: { cellCount: details.length, getColumn: (i) => details[i] },
+        getDataSet: () => ds,
+        getRowCount: () => ds.getRowCount(),
+        getCellValue: (r, c) => ds.getValue(r, c),
+        setCellValue: (r, c, v) => ds.setValue(r, c, v),
+        redraw() { grid.__redraws = (grid.__redraws || 0) + 1 },
+        selectRow(r) { grid.__selected = r },
+        ...extra,
+      }
+      if (!NOEL) grid.uuid = nextUuid()
+      return grid
+    }
+    function makeApp(id, title, controls) {
+      const map = new Map()
+      const cont = { getAllRecursiveChildren: () => controls.slice() }
+      const app = { id, title, getContainer: () => cont, lookup: (cid) => map.get(cid) ?? null }
+      for (const c of controls) map.set(c.id, c)
+      app.__add = (c) => { controls.push(c); map.set(c.id, c) }
+      return app
+    }
+    function saveBtn(appIdStr) {
+      return control('button', 'btnSave', {
+        enabled: true,
+        click() {
+          window.__saveByApp[appIdStr] = (window.__saveByApp[appIdStr] || 0) + 1
+          window.__saveClicks++
+          document.getElementById('dlg-confirm').hidden = false
+        },
+      })
+    }
+    const H = (text, extra = {}) => ({ text, ...extra })
+    const Dt = (columnName, ctl) => ({ columnName, control: ctl || null })
+    const apps = {} // key → { app, ds, grid, domHeaders, domRow }
+
+    // --- 교과평가 (바깥 m00 + 안쪽 m02) ---
+    const EVAL_COLS = ['shlCd', 'ayr', 'grd', 'clsCd', 'schorFlctnScCd', 'schorFlctNm', 'stuInvlNo', 'stuFlnm', 'sbjtCd', 'sbjtNm', 'orgaCd', 'clsNo', 'relmSn', 'relmNm', 'sccesCtrCd', 'evlCriaSccesCtrCd', 'sccesCtrSn', 'sccesCtrCn', 'lrnGoalCn', 'evlCtrNm', 'evlCtrCn', 'evlLvlCd', 'evlLvlNm', 'evlCtrCd', 'sccesCtrSn2', 'sem', 'enrScCd', 'stuBrdt', 'sameFlnm', 'stdntInfo']
+    const STD = [
+      ['6국05-01', '작품 속 인물의 삶을 찾고 자신의 삶과 관련지어 이해한다.', '인물의 삶 이해하기'],
+      ['6국05-02', '작품의 구성 요소를 이해하며 작품을 감상한다.', '작품 감상하기'],
+      ['6국05-03', '작품을 읽고 생각과 느낌을 다양하게 표현한다.', '생각과 느낌 표현하기'],
+    ]
+    const internal = Q.get('stdcode') === 'internal'
+    const evalList = []
+    const stdIndex = []
+    for (const s of STU)
+      STD.forEach(([code, text, goal], k) => {
+        const pre = s === 2 && k === 0
+        stdIndex.push(k)
+        evalList.push({
+          ...base(s), sbjtCd: '01', sbjtNm: '국어', clsNo: String(s), relmSn: '1', relmNm: '문학',
+          sccesCtrCd: internal ? 'E' + (7100 + k) : code, sccesCtrCn: `[${code}] ${text}`, lrnGoalCn: goal,
+          evlCtrCd: pre ? 'C' : '', evlCtrNm: pre ? '보통' : '', evlCtrCn: pre ? '기존 결과' : '', sem: '1', enrScCd: '1', stdntInfo: `6/3/${s} ${fake(s)}`,
+        })
+      })
+    const evalDs = new DataSet(EVAL_COLS, rowsOf(EVAL_COLS, evalList), (r, c, v, row) => {
+      // 단계를 고르면 나이스가 등록된 평가기준으로 평가결과를 채움 (첫 성취기준 행만)
+      if (c === 'evlCtrCd' && stdIndex[r] === 0 && v) row.evlCtrCn = '나이스 기준문 ' + v
+    })
+    const ITEMS = [['매우잘함', 'A'], ['잘함', 'B'], ['보통', 'C'], ['노력요함', 'D'], ['임의입력', 'Z']].map(([label, value]) => ({ label, value }))
+    let evalGrid = null
+    const lvlCombo = (id) =>
+      control('combobox', id, {
+        getItems() {
+          if (LVL === 'none' || LVL === 'itemset') return []
+          if (LVL === 'row') return evalGrid && evalGrid.__selected != null ? ITEMS.slice() : []
+          return ITEMS.slice()
+        },
+        ...(LVL === 'itemset' ? { itemSetConfig: { dataSet: 'dsLvl', label: 'cdNm', value: 'cd' } } : {}),
+      })
+    const evalHeaders = [H(''), H('반/번호'), H('성명', { targetColumnName: 'stuFlnm' }), H('영역'), H('성취기준'), H('평가요소'), H('단계'), H('평가결과')]
+    function evalApp(id, title, list) {
+      const ds = list === evalList ? evalDs : new DataSet(EVAL_COLS, [])
+      const cmb = lvlCombo('cmbLvl')
+      const txa = control('textarea', 'txa1')
+      const grid = makeGrid('grdMain', ds, evalHeaders, [Dt(''), Dt('clsNo'), Dt('stuFlnm', control('output', '1nn')), Dt('relmNm'), Dt('sccesCtrCn'), Dt('lrnGoalCn'), Dt('evlCtrCd', cmb), Dt('evlCtrCn', txa)])
+      const ctrls = [control('button', 'btnSearch'), saveBtn(id), control('button', 'btnDelete'), control('button', 'btnRd'), control('combobox', 'cmbRelmSn'), grid, cmb, txa]
+      if (LVL === 'itemset') ctrls.push(Object.assign(new DataSet(['cd', 'cdNm'], ITEMS.map((x) => ({ cd: x.value, cdNm: x.label }))), { id: 'dsLvl', type: 'dataset' }))
+      const app = makeApp(id, title, ctrls)
+      return { app, ds, grid }
+    }
+    const m02 = evalApp('edu/sw/els/scr/es/els_scres00_m02$1', '교과평가 교과별 평가', evalList)
+    evalGrid = m02.grid
+    const m00 = evalApp('edu/sw/els/scr/es/els_scres00_m00$1', '교과평가', [])
+    m00.app.__add(control('embeddedapp', 'emb1', { getEmbeddedAppInstance: () => m02.app }))
+    apps.m00 = { ...m00, domHeaders: evalHeaders.map((h) => h.text), domRow: () => [] }
+    apps.m02 = {
+      ...m02,
+      domHeaders: evalHeaders.map((h) => h.text),
+      domRow: (o, r) => ['', stdIndex[r] === 0 ? '3/' + o.clsNo : '', stdIndex[r] === 0 ? o.stuFlnm : '', o.relmNm, o.sccesCtrCn, o.lrnGoalCn, ({ A: '매우잘함', B: '잘함', C: '보통', D: '노력요함' })[o.evlCtrCd] || '', o.evlCtrCn],
+    }
+
+    // --- 학기말종합의견 ---
+    const SEM_COLS = ['shlCd', 'ayr', 'sem', 'grd', 'stuInvlNo', 'stdntInfo', 'stdntCn', 'obsvExistsYn', 'stdntNm', 'schorFlctnScCd', 'schorFlctNm', 'copyEvlRslt', 'gnrlzOpiCn', 'sbjtCd', 'etbSbjtCd', 'unyCurrRelmSn', 'sbjtCdNm', 'chk', 'sameFlnm', 'stuBrdt', 'cnsgnMcsPrcsYn', 'orgaCd']
+    const cnNum = Q.get('numsrc') === 'cn'
+    const semSubj = Q.get('semsubj') || '국어'
+    const semDs = new DataSet(SEM_COLS, rowsOf(SEM_COLS, STU.map((s) => ({
+      ...base(s), sem: '1', stdntInfo: cnNum ? `${fake(s)} 정보` : `3/${s}`, stdntCn: cnNum ? String(s) : `${fake(s)} 학생`, obsvExistsYn: 'N', stdntNm: fake(s),
+      copyEvlRslt: 'N', gnrlzOpiCn: s === 2 ? '기존 의견' : '', sbjtCd: '01', sbjtCdNm: semSubj, chk: '0',
+    }))))
+    {
+      const id = 'edu/sw/els/scr/es/els_scres10_m00$1'
+      const txa = control('textarea', 'txaGnrlzOpiCn')
+      const headers = [H(''), H('반/번호'), H('성명'), H('참고자료'), H('학기말 종합의견')]
+      const grid = makeGrid('grdMain', semDs, headers, [Dt('chk'), Dt('stdntInfo'), Dt(''), Dt(''), Dt('gnrlzOpiCn', txa)])
+      const app = makeApp(id, '학기말 종합의견', [control('button', 'btnSearch'), control('button', 'btnCopyAll'), saveBtn(id), control('button', 'btnReferData'), grid, txa])
+      apps.sem = { app, ds: semDs, grid, domHeaders: headers.map((h) => h.text), domRow: (o, r) => ['', '3/' + (r + 1), o.stdntNm, '조회', o.gnrlzOpiCn] }
+    }
+
+    // --- 행동특성 및 종합의견 ---
+    const BEH_COLS = ['shlCd', 'clsNo', 'stuFlnm', 'schorSpablMteCn', 'shlVioActnMteCn', 'srgVio', 'regSize', 'stuInvlNo', 'stuBrdt', 'sameFlnm', 'sxdsScCd', 'ayr', 'grd', 'clsCd', 'clsNm', 'enrScCd', 'schorFlctnScCd', 'cnsgnScCd', 'ddlnYn', 'ghvrDevCn', 'gnrlzOpiCn', 'actScCd', 'speclActSpablMteCn', 'allTiYmd', 'length', 'msDdlnYn']
+    const closed = Q.get('closed') === '1'
+    const behDs = new DataSet(BEH_COLS, rowsOf(BEH_COLS, STU.map((s) => ({
+      ...base(s), clsNo: String(s), sxdsScCd: s % 2 ? 'M' : 'F', clsNm: '3', ddlnYn: closed && s === 3 ? 'Y' : 'N', msDdlnYn: 'N',
+      gnrlzOpiCn: s === 2 ? '기존 행발' : '', length: s === 2 ? '15' : '0',
+    }))), (r, c, v, row) => {
+      if (c === 'gnrlzOpiCn') row.length = String(new TextEncoder().encode(v).length)
+    })
+    {
+      const id = 'edu/sw/els/sdl/bg/els_sdlbg00_m00$1'
+      const txa = control('textarea', 'txaGnrlz')
+      const headers = [H(''), H('번호'), H('성명'), H('행동특성 및 종합의견'), H('글자수'), H('위탁')]
+      const grid = makeGrid('grdMain', behDs, headers, [Dt(''), Dt('clsNo'), Dt('stuFlnm', control('output', '358')), Dt('gnrlzOpiCn', txa), Dt('length'), Dt('')])
+      const app = makeApp(id, '행동특성 및 종합의견', [control('button', 'btnSearch'), saveBtn(id), control('button', 'btnBndeSave'), grid, txa])
+      apps.beh = { app, ds: behDs, grid, domHeaders: headers.map((h) => h.text), domRow: (o) => ['', o.clsNo, o.stuFlnm, o.gnrlzOpiCn, o.length, ''] }
+    }
+
+    // --- 학생부자료기록 (창체) ---
+    const CRE_COLS = ['shlCd', 'shlCrseScCd', 'stuInvlNo', 'ayr', 'grd', 'actScCd', 'actScNm', 'actScCdGrp', 'clsCd', 'clsNm', 'clsNo', 'stuFlnm', 'sameFlnm', 'stuBrdt', 'comptHr', 'isuTime', 'speclActSpablMteCn', 'stuHopMteCn', 'allTiYmd', 'chk', 'length', 'lengthGrp', 'chgScCd', 'eduActDetaScCd', 'cnsgnScCd', 'actScNm2']
+    const AREAS = ['자율·자치활동', '동아리활동', '청소년단체활동', '학교스포츠클럽활동', '진로활동']
+    const creList = []
+    for (const s of STU)
+      AREAS.forEach((a, k) => creList.push({ ...base(s), actScCd: String(k + 1), actScNm: a, actScCdGrp: String(k + 1), clsNm: '3', clsNo: String(s), speclActSpablMteCn: s === 2 && k === 0 ? '기존 자율' : '', stuHopMteCn: '희망 ' + fake(s), chk: '0', length: '0', actScNm2: a }))
+    const creDs = new DataSet(CRE_COLS, rowsOf(CRE_COLS, creList))
+    {
+      const id = 'edu/sw/els/sdl/ce/els_sdlce06_m00$2'
+      const txa = control('textarea', 'txaSpeclActSpablMteCn')
+      const headers = [H(''), H('순번'), H('번호'), H('성명'), H('영역 구분'), H('특기사항'), H('글자수'), H('위탁/공동')]
+      const grid = makeGrid('grdMain', creDs, headers, [Dt('chk', control('checkbox', 'cbx')), Dt('stuInvlNo'), Dt('clsNo'), Dt('stuFlnm'), Dt(''), Dt('speclActSpablMteCn', txa), Dt('length'), Dt('')])
+      const app = makeApp(id, '학생부 자료기록', [control('button', 'btnSearch'), control('button', 'btnLoadSpablMteCn'), control('button', 'btnGetSportsClubInfo'), saveBtn(id), grid, txa])
+      apps.cre = { app, ds: creDs, grid, domHeaders: headers.map((h) => h.text), domRow: (o, r) => ['', String(r + 1), r % 5 === 0 ? o.clsNo : '', r % 5 === 0 ? o.stuFlnm : '', o.actScNm, o.speclActSpablMteCn, o.length, ''] }
+    }
+
+    // --- 동아리활동관리 (바깥 m00 → 학생부자료기록 m06, 출결 m05는 숨은 탭) ---
+    const CLUB_COLS = ['grd', 'dgr', 'clsCd', 'clsNm', 'clsNo', 'stuFlnm', 'dddepCd', 'ordScCd', 'dghtCrseScCd', 'shlCd', 'ayr', 'comptHr', 'userId', 'clubActDptScCd', 'clubActDptCd', 'clubActDptClsCd', 'clubActDptNm', 'sportsLength', 'actScCd', 'regSn', 'stuInvlNo', 'sorSeqSn', 'mvinDataYn', 'scrgRfltYn', 'ygpleCnt', 'slctlCnt', 'otherSlctlRfltChk', 'speclActSpablMteCn', 'length', 'scrgClsDdlnYn', 'clubActDptCnt', 'cnsgnScCd', 'sameFlnm', 'stuBrdt', 'eduCrse2022Yn']
+    const clubList = STU.map((s) => ({ ...base(s), clsNm: '3', clsNo: String(s), userId: 'user' + s, clubActDptNm: '가상동아리', speclActSpablMteCn: s === 2 ? '기존 특기사항' : '', scrgRfltYn: 'N', length: '0' }))
+    if (Q.get('classes') === '2') for (const s of [1, 2]) clubList.push({ ...base(s), clsCd: '04', clsNm: '4', clsNo: String(s), userId: 'user4' + s, clubActDptNm: '가상동아리', speclActSpablMteCn: '', scrgRfltYn: 'N', length: '0' })
+    const clubDs = new DataSet(CLUB_COLS, rowsOf(CLUB_COLS, clubList))
+    {
+      const id = 'edu/sw/els/sdl/ce/els_sdlce01_m06$1'
+      const txa = control('textarea', 'txaSpeclActSpablMteCn')
+      const headers = [H(''), H('학년'), H('반'), H('번호'), H('성명'), H('특기사항'), H('글자수')]
+      const grid = makeGrid('grdMain', clubDs, headers, [Dt(''), Dt('grd'), Dt('clsNm'), Dt('clsNo'), Dt('stuFlnm'), Dt('speclActSpablMteCn', txa), Dt('length')])
+      const app = makeApp(id, '동아리활동관리 학생부자료기록', [control('button', 'btnSearch'), saveBtn(id), control('button', 'btnBndeSave'), grid, txa])
+      apps.club = { app, ds: clubDs, grid, domHeaders: headers.map((h) => h.text), domRow: (o) => ['', o.grd, o.clsNm, o.clsNo, o.stuFlnm, o.speclActSpablMteCn, o.length] }
+    }
+    {
+      const cols = ['grd', 'clsNm', 'clsNo', 'stuFlnm', 'stuInvlNo', 'atteYn']
+      const ds = new DataSet(cols, rowsOf(cols, STU.map((s) => ({ ...base(s), clsNm: '3', clsNo: String(s), atteYn: 'Y' }))))
+      const headers = [H('학년'), H('번호'), H('성명'), H('출결')]
+      const grid = makeGrid('grdAtte', ds, headers, [Dt('grd'), Dt('clsNo'), Dt('stuFlnm'), Dt('atteYn')])
+      const app = makeApp('edu/sw/els/sdl/ce/els_sdlce01_m05$1', '동아리활동관리', [grid])
+      apps.atte = { app, ds, grid, domHeaders: headers.map((h) => h.text), domRow: (o) => [o.grd, o.clsNo, o.stuFlnm, o.atteYn], hidden: true }
+    }
+    const clubOuter = makeApp('edu/sw/els/sdl/ce/els_sdlce01_m00$1', '동아리활동관리', [
+      control('embeddedapp', 'embMain', { getEmbeddedAppInstance: () => apps.club.app }),
+      control('embeddedapp', 'embAtte', { getEmbeddedAppInstance: () => apps.atte.app }),
+    ])
+
+    // --- 진로활동관리 ---
+    const CAR_COLS = ['shlCd', 'ayr', 'grd', 'actScCd', 'stuInvlNo', 'clsCd', 'clsNm', 'clsNo', 'stuFlnm', 'sameFlnm', 'stuBrdt', 'comptHr', 'speclActSpablMteCn', 'allTiYmd', 'chk', 'length', 'cnsgnScCd', 'stuHopMteCn', 'stuHopMteCnOri']
+    function careerApp(id, pre) {
+      const ds = new DataSet(CAR_COLS, rowsOf(CAR_COLS, STU.map((s) => ({ ...base(s), actScCd: '5', clsNm: '3', clsNo: String(s), speclActSpablMteCn: s === 2 ? pre : '', chk: '0', length: '0', stuHopMteCn: '희망 ' + fake(s), stuHopMteCnOri: '희망 ' + fake(s) }))))
+      const txa = control('textarea', 'txaSpeclActSpablMteCn')
+      const hope = control('textarea', 'txaHopRealm')
+      const headers = [H(''), H('번호'), H('성명'), H('특기사항'), H('희망분야(선택)'), H('글자수'), H('위탁/공동')]
+      const grid = makeGrid('grdMain', ds, headers, [Dt(''), Dt('clsNo', control('output', 'optClsNo')), Dt('stuFlnm'), Dt('speclActSpablMteCn', txa), Dt('stuHopMteCn', hope), Dt('length'), Dt('')])
+      const app = makeApp(id, '진로활동관리', [control('button', 'btnSearch'), saveBtn(id), control('button', 'btnBndeSave'), grid, txa, hope])
+      return { app, ds, grid, domHeaders: headers.map((h) => h.text), domRow: (o) => ['', o.clsNo, o.stuFlnm, o.speclActSpablMteCn, o.stuHopMteCn, o.length, ''] }
+    }
+    apps.car = careerApp('edu/sw/els/sdl/ce/els_sdlce04_m00$2', '기존 진로')
+    if (Q.get('dup') === '1') apps.carOld = { ...careerApp('edu/sw/els/sdl/ce/els_sdlce04_m00$1', '숨은 탭 진로'), hidden: true }
+
+    // --- MDI 탭과 화면(DOM) ---
+    const TABS = [
+      ['교과평가', m00.app, ['m00', 'm02']],
+      ['학기말종합의견', apps.sem.app, ['sem']],
+      ['행동특성', apps.beh.app, ['beh']],
+      ['학생부자료기록', apps.cre.app, ['cre']],
+      ['동아리활동관리', clubOuter, ['club', 'atte']],
+      ['진로활동관리', apps.car.app, ['car']],
+    ]
+    if (apps.carOld) TABS.splice(1, 0, ['진로(이전)', apps.carOld.app, ['carOld']])
+    const esc2 = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+    let html = ''
+    let dn = 0
+    for (const [key, , keys] of TABS) {
+      const shown = key === screen
+      html += `<section class="mdi-tab cl-embeddedapp" data-tab="${esc2(key)}" style="display:${shown ? 'block' : 'none'}">`
+      html += `<div class="toolbar"><div class="cl-button" role="button" data-save="${esc2(key)}">저장</div></div>`
+      for (const k of keys) {
+        const a = apps[k]
+        const gid = a.grid.uuid || 'dom-' + ++dn
+        html += `<div class="app-sec" data-app="${esc2(a.app.id)}" style="display:${a.hidden ? 'none' : 'block'}">`
+        html += `<div class="cl-control cl-grid" role="grid" id="${gid}" data-ndid="${gid}"><div class="cl-grid-header" role="row">`
+        html += a.domHeaders.map((h) => `<div role="columnheader" aria-label="${esc2(h === '반/번호' ? '반/번호 정렬' : h)}" style="display:inline-block;min-width:60px">${esc2(h)}</div>`).join('')
+        html += '</div>'
+        const rows = a.ds._rows.slice(0, 16)
+        rows.forEach((o, r) => {
+          html += '<div class="cl-grid-row" role="row">' + a.domRow(o, r).map((t) => `<div role="gridcell" style="display:inline-block;min-width:60px">${esc2(t)}</div>`).join('') + '</div>'
+        })
+        html += '</div></div>'
+      }
+      html += '</section>'
+    }
+    document.getElementById('toolbar').innerHTML = ''
+    document.getElementById('grid').innerHTML = html
+    // 실제 나이스처럼 화면 제목은 예전 탭(교과평가)이 남아 있을 수 있음 → 제목만으로 판단하면 틀림
+    document.getElementById('title').textContent = '교과평가'
+    for (const el of document.querySelectorAll('[data-save]')) {
+      const tab = TABS.find((t) => t[0] === el.dataset.save)
+      el.addEventListener('click', () => {
+        const a = apps[tab[2].find((k) => apps[k].app.lookup('btnSave'))]
+        if (a) a.app.lookup('btnSave').click()
+      })
+    }
+
+    const selTab = TABS.find((t) => t[0] === screen)
+    const mdi = control('mdifolder', 'mdiCn', {
+      getSelectedTabItem: Q.get('nomdi') === '1' ? undefined : () => ({ getContent: () => ({ getEmbeddedAppInstance: () => selTab[1] }) }),
+    })
+    if (Q.get('nomdi') === '1') delete mdi.getSelectedTabItem
+    const index = makeApp('app/com/main/Index$1', '', [mdi, control('button', 'btnLogout')])
+    const all = [index]
+    for (const [, outer, keys] of TABS) {
+      if (!all.includes(outer)) all.push(outer)
+      for (const k of keys) if (!all.includes(apps[k].app)) all.push(apps[k].app)
+    }
+    window.cpr = { core: { Platform: { INSTANCE: { getAllRunningAppInstances: () => all.slice(), getVersion: () => '1.0.6135' } } } }
+    // 테스트 확인용 (원본 데이터 직접 읽기: 읽은 횟수에 들어가지 않음)
+    const keyOf = { 교과평가: 'm02', 학기말종합의견: 'sem', 행동특성: 'beh', 학생부자료기록: 'cre', 동아리활동관리: 'club', 진로활동관리: 'car' }
+    window.__mock = {
+      visibleKey: keyOf[screen],
+      keys: Object.keys(apps),
+      appId: (k) => apps[k].app.id,
+      rows: (k) => apps[k].ds._rows.map((o) => Object.fromEntries(Object.entries(o).filter(([c]) => !PERSONAL.includes(c)))),
+      states: (k) => apps[k].ds._states.slice(),
+      redraws: (k) => apps[k].grid.__redraws || 0,
+      selected: (k) => apps[k].grid.__selected,
+      snapshot: () => JSON.stringify(Object.keys(apps).map((k) => apps[k].ds._rows)),
+      snapshotExcept: (skip) => JSON.stringify(Object.keys(apps).filter((k) => k !== skip).map((k) => apps[k].ds._rows)),
+    }
+  }
+
+  if (Q.get('cpr') === '1') buildRealCpr()
+
+  // ?cpr=legacy: 1차에서 추정한 cpr 모양 (알려지지 않은 화면 → 1차 cpr 그리드 방식이 계속 동작하는지 확인)
+  if (Q.get('cpr') === 'legacy') {
     window.__nameReads = 0
     let cols
     const data = []
@@ -204,10 +515,12 @@
 
   const confirmDlg = document.getElementById('dlg-confirm')
   const infoDlg = document.getElementById('dlg-info')
-  document.getElementById('btn-save').addEventListener('click', () => {
-    window.__saveClicks++
-    confirmDlg.hidden = false
-  })
+  const domSave = document.getElementById('btn-save')
+  if (domSave)
+    domSave.addEventListener('click', () => {
+      window.__saveClicks++
+      confirmDlg.hidden = false
+    })
   document.getElementById('dlg-cancel').addEventListener('click', () => { confirmDlg.hidden = true })
   document.getElementById('dlg-ok').addEventListener('click', () => {
     window.__confirmClicks++

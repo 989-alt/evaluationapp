@@ -6,7 +6,9 @@
   if (globalThis.__sgbContentLoaded) return
   globalThis.__sgbContentLoaded = true
 
-  const TIMEOUT = { detect: 10000, scan: 10000, fill: 10 * 60 * 1000, stop: 3000, ping: 500 }
+  // neis-main.js의 VERSION과 같아야 합니다. 확장을 업데이트한 뒤 새로고침하지 않은 나이스 탭에는 예전 엔진이 남아 있으므로 막습니다
+  const ENGINE_VERSION = '0.2.0'
+  const TIMEOUT = { detect: 10000, scan: 10000, inspect: 15000, fill: 10 * 60 * 1000, stop: 3000, ping: 500 }
   const pending = new Map() // nonce -> { resolve, timer, progress }
 
   const newNonce = () => {
@@ -47,6 +49,20 @@
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
   const ints = (v) => (Array.isArray(v) ? v.filter((x) => Number.isInteger(x)).slice(0, 200) : [])
   const short = (v, n) => String(v ?? '').slice(0, n)
+  const STRATEGIES = ['cpr-known', 'cpr', 'dom']
+  const strategy = (v) => (STRATEGIES.includes(v) ? v : null)
+  const strs = (v, n, cap) => (Array.isArray(v) ? v.slice(0, cap).map((x) => short(x, n)) : [])
+  const numOrNull = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v))
+  /** 앱 id (예: edu/sw/els/sdl/ce/els_sdlce04_m00$2) — 경로 모양 글자만 */
+  const appIdStr = (v) => (typeof v === 'string' && /^[\w/$.-]{1,100}$/.test(v) ? v : null)
+  function cleanUnmatched(v) {
+    return Array.isArray(v)
+      ? v
+          .filter((u) => u && Number.isInteger(u.student))
+          .slice(0, 200)
+          .map((u) => ({ student: u.student, code: short(u.code, 100) }))
+      : []
+  }
 
   function cleanProgress(d) {
     return {
@@ -62,14 +78,17 @@
   function cleanDetect(d) {
     if (!d || typeof d !== 'object') return { error: 'no-result' }
     if (d.error) return { error: short(d.error, 100) }
-    const strs = (v, n, cap) => (Array.isArray(v) ? v.slice(0, cap).map((x) => short(x, n)) : [])
     return {
       screen: short(d.screen, 20),
       detectedScreen: short(d.detectedScreen, 20),
       forced: d.forced === true,
       running: d.running === true,
       ready: d.ready === true,
-      strategy: d.strategy === 'cpr' || d.strategy === 'dom' ? d.strategy : null,
+      strategy: strategy(d.strategy),
+      knownApp: d.knownApp === true,
+      activeApp: appIdStr(d.activeApp),
+      datasetRows: numOrNull(d.datasetRows),
+      warnings: strs(d.warnings, 60, 10),
       rows: num(d.rows),
       cpr: d.cpr === true,
       cprVersion: d.cprVersion == null ? null : short(d.cprVersion, 40),
@@ -99,22 +118,19 @@
     if (!r || typeof r !== 'object') return { error: 'no-result' }
     const out = {
       screen: short(r.screen, 20),
-      strategy: r.strategy === 'cpr' || r.strategy === 'dom' ? r.strategy : null,
+      strategy: strategy(r.strategy),
+      activeApp: appIdStr(r.activeApp),
       filled: num(r.filled),
       rows: num(r.rows),
       cells: num(r.cells),
       skipped: num(r.skipped),
+      autoFilled: num(r.autoFilled),
       verifyFailed: num(r.verifyFailed),
       failed: num(r.failed),
       confirmed: num(r.confirmed),
       missing: ints(r.missing),
       ambiguous: ints(r.ambiguous),
-      unmatchedStandards: Array.isArray(r.unmatchedStandards)
-        ? r.unmatchedStandards
-            .filter((u) => u && Number.isInteger(u.student))
-            .slice(0, 200)
-            .map((u) => ({ student: u.student, code: short(u.code, 100) }))
-        : [],
+      unmatchedStandards: cleanUnmatched(r.unmatchedStandards),
       notes: Array.isArray(r.notes) ? r.notes.slice(0, 20).map((x) => short(x, 300)) : [],
       saved: r.saved === true,
       aborted: r.aborted === true,
@@ -123,14 +139,62 @@
     return out
   }
 
+  /** 인식 검사 답: 숫자·번호·짧은 글자만 */
+  function cleanInspect(r) {
+    if (!r || typeof r !== 'object') return { error: 'no-result' }
+    const intMap = (v) => {
+      if (!v || typeof v !== 'object') return null
+      const out = {}
+      for (const [k, n] of Object.entries(v).slice(0, 200)) if (/^\d{1,4}$/.test(k) && Number.isInteger(n)) out[k] = n
+      return out
+    }
+    const codes = (v) => {
+      if (!v || typeof v !== 'object') return null
+      const out = {}
+      for (const [k, c] of Object.entries(v).slice(0, 20)) out[short(k, 20)] = short(c, 40)
+      return out
+    }
+    const out = {
+      screen: short(r.screen, 20),
+      strategy: strategy(r.strategy),
+      knownApp: r.knownApp === true,
+      activeApp: appIdStr(r.activeApp),
+      datasetRows: numOrNull(r.datasetRows),
+      knownApps: Array.isArray(r.knownApps)
+        ? r.knownApps.slice(0, 20).map((k) => ({
+            id: appIdStr(k && k.id),
+            screen: short(k && k.screen, 20),
+            visible: k && typeof k.visible === 'boolean' ? k.visible : null,
+            rows: num(k && k.rows),
+          }))
+        : [],
+      studentsFound: num(r.studentsFound),
+      studentsMissing: ints(r.studentsMissing),
+      ambiguous: ints(r.ambiguous),
+      standardsPerStudent: intMap(r.standardsPerStudent),
+      unmatchedStandards: cleanUnmatched(r.unmatchedStandards),
+      tasks: num(r.tasks),
+      cells: num(r.cells),
+      levelCodes: codes(r.levelCodes),
+      resultAutoFill: typeof r.resultAutoFill === 'boolean' ? r.resultAutoFill : null,
+      warnings: strs(r.warnings, 60, 20),
+      notes: strs(r.notes, 300, 20),
+    }
+    if (r.error) out.error = short(r.error, 100)
+    return out
+  }
+
+  /** 엔진 상태: 'ok' | 'old'(예전 버전) | null(없음) */
   async function enginePresent(ms = TIMEOUT.ping) {
     const r = await callEngine('ping', null, ms)
-    return !!(r && r.ok)
+    if (!(r && r.ok)) return null
+    return r.version === ENGINE_VERSION ? 'ok' : 'old'
   }
 
   /** MAIN world 엔진이 없으면 서비스 워커에 넣어 달라고 합니다 (scripting.executeScript, world:'MAIN') */
   async function ensureEngine() {
-    if (await enginePresent()) return true
+    const now = await enginePresent()
+    if (now) return now
     try {
       await chrome.runtime.sendMessage({ type: 'inject-main' })
     } catch {
@@ -142,12 +206,14 @@
   async function handle(msg) {
     const cmd = msg.cmd
     if (cmd === 'ping') return { ok: true, frame: location.href.slice(0, 80) }
-    if (!['detect', 'scan', 'fill', 'stop'].includes(cmd)) return { error: 'unknown-command' }
+    if (!['detect', 'scan', 'fill', 'inspect', 'stop'].includes(cmd)) return { error: 'unknown-command' }
     if (cmd === 'stop') {
       if (!(await enginePresent())) return { ok: true, engine: false }
       return callEngine('stop', null, TIMEOUT.stop)
     }
-    if (!(await ensureEngine())) return { error: 'engine-missing' }
+    const engine = await ensureEngine()
+    if (!engine) return { error: 'engine-missing' }
+    if (engine === 'old') return { error: 'engine-outdated' }
     if (cmd === 'fill') {
       const result = cleanResult(
         await callEngine('fill', msg.args, TIMEOUT.fill, (p) => {
@@ -158,6 +224,7 @@
       return result
     }
     if (cmd === 'detect') return cleanDetect(await callEngine('detect', msg.args, TIMEOUT.detect))
+    if (cmd === 'inspect') return cleanInspect(await callEngine('inspect', msg.args, TIMEOUT.inspect))
     return callEngine(cmd, msg.args, TIMEOUT[cmd])
   }
 

@@ -24,6 +24,7 @@ const ERR = {
   'content-missing': '나이스 탭과 연결하지 못했습니다. 나이스 탭을 새로고침(F5)한 뒤 다시 열어 주세요.',
   'no-response': '나이스 탭이 응답하지 않습니다. 새로고침(F5)한 뒤 다시 시도하세요.',
   'engine-missing': '입력 엔진을 화면에 넣지 못했습니다. 새로고침(F5) 후 다시 시도하세요.',
+  'engine-outdated': '확장이 새 버전으로 바뀌었습니다. 나이스 탭을 새로고침(F5)한 뒤 다시 시도하세요.',
   timeout: '응답 시간이 지났습니다. 화면이 다 열렸는지 확인하고 다시 시도하세요.',
   'grid-not-found': '입력할 표를 찾지 못했습니다. 나이스에서 "조회"를 누른 뒤 다시 시도하세요.',
   'unknown-screen': '화면을 알아보지 못했습니다. "화면 지정"에서 직접 고르세요.',
@@ -31,7 +32,22 @@ const ERR = {
   'bad-job': '입력 데이터 모양이 올바르지 않습니다.',
   'mixed-classes': '여러 반이 섞인 명단입니다. 반을 하나만 조회한 뒤 다시 실행하세요.',
   'subject-mismatch': '나이스 화면에서 고른 과목과 데이터 과목이 다릅니다. 과목을 맞춘 뒤 다시 실행하세요.',
+  'level-code-unknown': '단계(매우잘함·잘함·보통·노력요함) 코드를 나이스 화면에서 찾지 못해 입력하지 않았습니다. 화면 구조를 수집해 보내 주세요.',
+  closed: '마감된 학생이 있어 입력하지 않았습니다. 나이스에서 마감 여부를 확인하세요.',
 }
+/** 화면 인식·인식 검사 경고 */
+const WARN = {
+  'active-app-ambiguous': '보이는 나이스 화면이 여러 개라 하나를 고르지 못했습니다. 쓰지 않는 탭을 닫고 다시 인식하세요.',
+  'active-app-unconfirmed': '지금 보이는 나이스 화면을 확인하지 못했습니다. 화면 구조를 수집해 보내 주세요.',
+  'known-columns-missing': '나이스 화면의 데이터 열이 예상과 달라 화면(DOM) 방식으로 입력합니다.',
+  'mixed-classes': ERR['mixed-classes'],
+  'subject-mismatch': ERR['subject-mismatch'],
+  'level-code-unknown': ERR['level-code-unknown'],
+  closed: ERR.closed,
+}
+const STRATEGY_LABEL = { 'cpr-known': '나이스 데이터', cpr: 'cpr', dom: '화면(DOM)' }
+/** 앱 id의 마지막 이름 (edu/sw/els/sdl/ce/els_sdlce04_m00$2 → els_sdlce04_m00) */
+const shortApp = (id) => String(id || '').split('/').pop().replace(/\$\d+$/, '')
 /** 오류 → { text, raw } (모르는 오류는 일반 안내 + 원문을 작게) */
 function errInfo(e) {
   const s = String(e || '')
@@ -88,6 +104,7 @@ let detected = null
 let running = false
 let monitoring = false // 팝업을 다시 열었을 때 이미 진행 중인 입력을 지켜보는 중
 let lastDone = null // content script가 직접 알려 준 마지막 결과 (서비스 워커 응답이 끊겼을 때 대비)
+let inspecting = false
 
 function send(msg, ms = 15000) {
   return Promise.race([
@@ -246,9 +263,12 @@ function renderScreen() {
   const parts = []
   parts.push(detected.cpr ? `cpr 감지${detected.cprVersion ? ' (' + detected.cprVersion + ')' : ''} · 앱 ${detected.apps}개` : 'cpr 없음')
   parts.push(`표 ${Array.isArray(detected.grids) ? detected.grids.length : 0}개`)
-  if (detected.ready) parts.push(`${detected.strategy === 'cpr' ? 'cpr' : '화면(DOM)'} 방식`)
+  if (detected.ready) parts.push(`${STRATEGY_LABEL[detected.strategy] || '화면(DOM)'} 방식`)
+  if (detected.knownApp && detected.activeApp) parts.push(`앱 ${shortApp(detected.activeApp)}`)
   if (detected.frames > 1) parts.push(`프레임 ${detected.frames}개`)
   detail.textContent = '자세히 · ' + parts.join(' · ')
+  const warns = (Array.isArray(detected.warnings) ? detected.warnings : []).map((w) => WARN[w]).filter(Boolean)
+  if (warns.length) status.textContent += ' ' + warns.join(' ')
 }
 
 async function runDetect() {
@@ -368,8 +388,9 @@ function renderFill() {
   $('fill-hint').textContent = hint
   const chosen = sel.value !== '' && (screen !== '학생부자료기록' || $('fill-area').value !== '')
   const can = !running && !!screen && list.length > 0 && chosen && (tabKind === 'neis' || tabKind === 'gokr-ok') && !(detected && detected.error)
-  $('btn-fill').disabled = !can
-  $('btn-preview').disabled = !can
+  $('btn-fill').disabled = !can || inspecting
+  $('btn-preview').disabled = !can || inspecting
+  $('btn-inspect').disabled = !can || inspecting
   $('btn-stop').disabled = !running
 }
 
@@ -396,23 +417,88 @@ function showResult(r) {
     for (const n of notes) log.append(el('p', null, n))
     return
   }
-  log.append(el('p', 'ok', `${r.filled}명 입력 · 칸 ${r.cells ?? 0}개 · ${r.strategy === 'cpr' ? 'cpr' : '화면(DOM)'} 방식`))
+  log.append(el('p', 'ok', `${r.filled}명 입력 · 칸 ${r.cells ?? 0}개 · ${STRATEGY_LABEL[r.strategy] || '화면(DOM)'} 방식`))
   log.append(el('p', null, r.saved ? `저장을 눌렀습니다${r.confirmed ? ' · 확인 ' + r.confirmed + '번' : ''}` : '저장은 누르지 않았습니다'))
   const missing = arr(r.missing)
   const ambiguous = arr(r.ambiguous)
   if (missing.length) log.append(el('p', 'bad', `못 찾은 번호: ${missing.join(', ')}`))
   if (ambiguous.length) log.append(el('p', 'bad', `여러 곳에 있어 건너뛴 번호: ${ambiguous.join(', ')}`))
-  const unmatched = arr(r.unmatchedStandards).filter((u) => u && typeof u === 'object')
-  if (unmatched.length) {
-    const by = new Map()
-    for (const u of unmatched) by.set(String(u.code), (by.get(String(u.code)) || []).concat(u.student))
-    for (const [code, ss] of by) log.append(el('p', 'bad', `성취기준 ${code} 행 없음: ${ss.join(', ')}번`))
-  }
+  showUnmatched(log, r.unmatchedStandards)
   if (r.aborted) log.append(el('p', 'bad', '중지됨'))
   for (const n of notes) log.append(el('p', 'muted', n))
 }
 
+function showUnmatched(log, list) {
+  const unmatched = (Array.isArray(list) ? list : []).filter((u) => u && typeof u === 'object')
+  if (!unmatched.length) return
+  const by = new Map()
+  for (const u of unmatched) by.set(String(u.code), (by.get(String(u.code)) || []).concat(u.student))
+  for (const [code, ss] of by) log.append(el('p', 'bad', `성취기준 ${code} 행 없음: ${ss.join(', ')}번`))
+}
+
+/** 인식 검사 결과 (나이스 칸은 바꾸지 않음) */
+function showInspect(r) {
+  const log = $('log')
+  log.textContent = ''
+  if (!r || typeof r !== 'object') return
+  const arr = (v) => (Array.isArray(v) ? v : [])
+  const head = el('p', r.error ? 'bad' : 'ok', `인식 검사 · ${SCREEN_LABEL[r.screen] || r.screen || '알 수 없는 화면'}${r.strategy ? ' · ' + (STRATEGY_LABEL[r.strategy] || r.strategy) + ' 방식' : ''}`)
+  log.append(head)
+  if (r.error) {
+    log.append(putErr(el('p', 'bad'), r.error))
+  } else {
+    if (r.knownApp) log.append(el('p', null, `앱 ${shortApp(r.activeApp)} · 데이터 ${r.datasetRows ?? 0}행`))
+    log.append(el('p', null, `찾은 학생 ${r.studentsFound}명 · 넣을 칸 ${r.cells}개`))
+    const missing = arr(r.studentsMissing)
+    if (missing.length) log.append(el('p', 'bad', `못 찾은 번호: ${missing.join(', ')}`))
+    if (arr(r.ambiguous).length) log.append(el('p', 'bad', `여러 곳에 있어 건너뛸 번호: ${r.ambiguous.join(', ')}`))
+    if (r.screen === '교과평가') {
+      const per = Object.values(r.standardsPerStudent || {})
+      if (per.length) {
+        const min = Math.min(...per)
+        const max = Math.max(...per)
+        log.append(el('p', null, `학생별 성취기준 ${min === max ? min : min + '~' + max}개`))
+      }
+      showUnmatched(log, r.unmatchedStandards)
+      const codes = r.levelCodes && Object.keys(r.levelCodes).length ? r.levelCodes : null
+      log.append(el('p', codes ? null : 'bad', codes ? `단계 코드: ${Object.entries(codes).map(([k, v]) => `${k}=${v}`).join(', ')}` : '단계 코드를 읽지 못했습니다 (단계는 입력하지 않습니다)'))
+      const af = r.resultAutoFill === true ? '예 (단계를 고르면 나이스가 채우는 것으로 보임)' : r.resultAutoFill === false ? '아니오' : '알 수 없음'
+      log.append(el('p', 'muted', `평가결과 자동 채움: ${af}`))
+    }
+  }
+  for (const w of arr(r.warnings)) if (WARN[w]) log.append(el('p', 'bad', WARN[w]))
+  for (const n of arr(r.notes)) log.append(el('p', 'muted', String(n)))
+  log.append(el('p', 'muted', '인식 검사는 나이스 칸을 바꾸지 않습니다.'))
+}
+
 let preflightArmed = null // 사전 검사 오류가 있을 때 한 번 더 눌러야 시작 (삭제와 같은 방식)
+function buildJob(screen, p, save) {
+  return {
+    screen,
+    area: screen === '학생부자료기록' ? $('fill-area').value : undefined,
+    subject: p.kind === 'subject' ? p.subject : undefined,
+    mode: document.querySelector('input[name=mode]:checked').value,
+    save: !!save,
+    delayMs: 400,
+    rows: p.rows.map((r) => ({ student: r.student, text: r.text, standards: r.standards })),
+  }
+}
+
+async function startInspect() {
+  const screen = effectiveScreen()
+  if ($('fill-payload').value === '') return
+  const p = state.payloads[Number($('fill-payload').value)]
+  if (!screen || !p || running) return
+  inspecting = true
+  renderFill()
+  setMsg('fill-msg', '인식 검사 중… (나이스 칸은 바꾸지 않습니다)')
+  const r = await neis('inspect', buildJob(screen, p, false), 25000)
+  inspecting = false
+  renderFill()
+  setMsg('fill-msg', '')
+  showInspect(r)
+}
+
 async function startFill(save, btn) {
   const screen = effectiveScreen()
   if ($('fill-payload').value === '') return
@@ -433,16 +519,7 @@ async function startFill(save, btn) {
   preflightArmed = null
   btn.classList.remove('armed')
   setMsg('fill-msg', '')
-  const mode = document.querySelector('input[name=mode]:checked').value
-  const job = {
-    screen,
-    area: screen === '학생부자료기록' ? $('fill-area').value : undefined,
-    subject: p.kind === 'subject' ? p.subject : undefined,
-    mode,
-    save: !!save,
-    delayMs: 400,
-    rows: p.rows.map((r) => ({ student: r.student, text: r.text, standards: r.standards })),
-  }
+  const job = buildJob(screen, p, save)
   running = true
   lastDone = null
   renderFill()
@@ -457,6 +534,7 @@ async function startFill(save, btn) {
 
 $('btn-fill').addEventListener('click', () => startFill($('fill-save').checked, $('btn-fill')))
 $('btn-preview').addEventListener('click', () => startFill(false, $('btn-preview')))
+$('btn-inspect').addEventListener('click', startInspect)
 $('btn-stop').addEventListener('click', async () => {
   await neis('stop', null, 5000)
   $('progress-text').textContent = '중지 요청함…'
