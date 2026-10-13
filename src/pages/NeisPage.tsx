@@ -138,13 +138,19 @@ export default function NeisPage() {
 
       <Card className="p-6">
         <div className="eyebrow mb-1">INSTALL</div>
-        <h2 className="m-0 mb-4 text-[18px] font-bold">크롬 확장 설치 (준비 중)</h2>
+        <h2 className="m-0 mb-4 text-[18px] font-bold">크롬 확장 설치</h2>
         <ol className="m-0 p-0 list-none flex flex-col gap-3">
           <li className="flex gap-3 items-start">
             <span className="shrink-0 w-6 h-6 rounded-full bg-accent text-white text-[12px] font-bold flex items-center justify-center">1</span>
             <div className="flex flex-wrap items-center gap-3">
-              <span>크롬 웹스토어에서 "AI 생기부 보조 생성기 → 나이스" 설치</span>
-              <button type="button" className="btn btn-sm" disabled>웹스토어 열기 (출시 전)</button>
+              <span>
+                저장소의{' '}
+                <a className="underline font-bold" href="https://github.com/989-alt/evaluationapp/tree/main/extension" target="_blank" rel="noreferrer">
+                  <code>extension/</code> 폴더
+                </a>
+                를 내려받아 chrome://extensions → 개발자 모드 → 압축해제된 확장 프로그램 로드
+              </span>
+              <button type="button" className="btn btn-sm" disabled>웹스토어 (심사 준비 중)</button>
             </div>
           </li>
           <li className="flex gap-3 items-start"><span className="shrink-0 w-6 h-6 rounded-full bg-accent text-white text-[12px] font-bold flex items-center justify-center">2</span><span>나이스 로그인 후 해당 화면 조회</span></li>

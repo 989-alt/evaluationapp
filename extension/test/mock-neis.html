@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>나이스 모의 화면</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; display: flex; }
+  nav.menu { width: 180px; background: #eef; padding: 8px; font-size: 12px; }
+  nav.menu .cl-text { display: block; padding: 2px 0; }
+  main { flex: 1; padding: 12px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #999; padding: 4px; font-size: 12px; vertical-align: top; }
+  textarea { width: 100%; height: 40px; }
+  .toolbar { margin: 8px 0; display: flex; gap: 6px; }
+  .cl-dialog { position: fixed; left: 40%; top: 30%; background: #fff; border: 2px solid #333; padding: 16px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<!-- 실제 나이스처럼 왼쪽 메뉴에 모든 화면 이름이 보입니다(제목 인식이 메뉴에 속지 않는지 확인) -->
+<nav class="menu cl-global-aside">
+  <span class="cl-text">교과평가</span>
+  <span class="cl-text">학기말종합의견</span>
+  <span class="cl-text">행동특성 및 종합의견</span>
+  <span class="cl-text">학생부자료기록</span>
+  <span class="cl-text">동아리활동관리</span>
+  <span class="cl-text">진로활동관리</span>
+</nav>
+<main>
+  <div class="page-title"><h2 id="title"></h2></div>
+  <div class="toolbar" id="toolbar"></div>
+  <div id="grid"></div>
+</main>
+
+<div class="cl-dialog" role="dialog" id="dlg-confirm" hidden>
+  <p>저장하시겠습니까?</p>
+  <button type="button" id="dlg-cancel">취소</button>
+  <button type="button" id="dlg-ok">확인</button>
+</div>
+<div class="cl-dialog" role="dialog" id="dlg-info" hidden>
+  <p>저장되었습니다.</p>
+  <button type="button" id="dlg-info-ok">확인</button>
+</div>
+
+<script>
+(() => {
+  const screen = new URLSearchParams(location.search).get('screen') || '교과평가'
+  window.__saveClicks = 0
+  window.__confirmClicks = 0
+  window.__saved = false
+  const NAMES = ['학생A', '학생B', '학생C', '학생D', '학생E']
+  const STUDENTS = [1, 2, 3, 4]
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+  const LEVELS = ['', '매우잘함', '잘함', '보통', '노력요함', '임의입력']
+  const levelSelect = (v = '') => `<select class="level">${LEVELS.map((l) => `<option value="${l ? 'L' + LEVELS.indexOf(l) : ''}"${l === v ? ' selected' : ''}>${l || '선택'}</option>`).join('')}</select>`
+
+  const title = {
+    교과평가: '교과평가',
+    학기말종합의견: '학기말종합의견',
+    행동특성: '행동특성 및 종합의견',
+    학생부자료기록: '학생부자료기록',
+    동아리활동관리: '동아리활동관리',
+    진로활동관리: '진로활동관리',
+  }[screen]
+  document.getElementById('title').textContent = title
+  document.title = '나이스 모의 화면 - ' + title
+
+  const buttons = {
+    교과평가: ['조회', '저장', '삭제', '출력'],
+    학기말종합의견: ['조회', '교과평가일괄복사', '저장'],
+    행동특성: ['조회', '엑셀업로드', '저장'],
+    학생부자료기록: ['조회', '동아리특기사항가져오기', '저장'],
+    동아리활동관리: ['조회', '저장'],
+    진로활동관리: ['조회', '저장'],
+  }[screen]
+  const tb = document.getElementById('toolbar')
+  for (const b of buttons) {
+    const el = document.createElement('button')
+    el.type = 'button'
+    el.className = 'cl-button'
+    el.textContent = b
+    if (b === '저장') el.id = 'btn-save'
+    tb.appendChild(el)
+  }
+
+  let html = ''
+  if (screen === '교과평가') {
+    const STD = [
+      ['[6국05-01]', '작품 속 인물의 삶을 찾고 자신의 삶과 관련지어 이해한다.', '인물의 삶 이해하기'],
+      ['[6국05-02]', '작품의 구성 요소를 이해하며 작품을 감상한다.', '작품 감상하기'],
+    ]
+    html += '<table id="grid-eval"><thead><tr><th>번호</th><th>성명</th><th>영역</th><th>성취기준</th><th>평가요소</th><th>단계</th><th>평가결과</th></tr></thead><tbody>'
+    for (const s of STUDENTS) {
+      STD.forEach(([code, text, el], i) => {
+        const pre = s === 2 && i === 0
+        html += '<tr>'
+        if (i === 0) html += `<td rowspan="${STD.length}">${s}</td><td rowspan="${STD.length}">${NAMES[s - 1]}</td>`
+        html += `<td>문학</td><td>${esc(code)} ${esc(text)}</td><td>${esc(el)}</td>`
+        html += `<td>${levelSelect(pre ? '보통' : '')}</td>`
+        html += `<td><input type="text" class="result" value="${pre ? '기존 결과' : ''}"></td>`
+        html += '</tr>'
+      })
+    }
+    html += '</tbody></table>'
+  } else if (screen === '학기말종합의견') {
+    html += '<table id="grid-sem"><thead><tr><th>반/번호</th><th>성명</th><th>참고자료</th><th>학기말 종합의견</th></tr></thead><tbody>'
+    for (const s of STUDENTS)
+      html += `<tr><td>3/${s}</td><td>${NAMES[s - 1]}</td><td><button type="button">조회</button></td><td><textarea>${s === 2 ? '기존 의견' : ''}</textarea></td></tr>`
+    html += '</tbody></table>'
+  } else if (screen === '행동특성') {
+    html += '<table id="grid-beh"><thead><tr><th>번호</th><th>성명</th><th>행동특성 및 종합의견</th><th>글자수 Byte</th><th>위탁</th></tr></thead><tbody>'
+    for (const s of STUDENTS)
+      html += `<tr><td>${s}</td><td>${NAMES[s - 1]}</td><td><textarea>${s === 2 ? '기존 행발' : ''}</textarea></td><td>0</td><td></td></tr>`
+    html += '</tbody></table>'
+  } else if (screen === '학생부자료기록') {
+    const AREAS = ['자율·자치활동', '동아리활동', '자율동아리', '진로활동']
+    html += '<table id="grid-cre"><thead><tr><th>번호</th><th>성명</th><th>영역 구분</th><th>특기사항</th><th>글자수</th></tr></thead><tbody>'
+    for (const s of STUDENTS) {
+      AREAS.forEach((a, i) => {
+        html += '<tr>'
+        if (i === 0) html += `<td rowspan="${AREAS.length}">${s}</td><td rowspan="${AREAS.length}">${NAMES[s - 1]}</td>`
+        const pre = s === 2 && a === '자율·자치활동' ? '기존 자율' : ''
+        html += `<td>${a}</td><td><textarea data-area="${a}">${pre}</textarea></td><td>0</td></tr>`
+      })
+    }
+    html += '</tbody></table>'
+  } else {
+    html += '<table id="grid-club"><thead><tr><th>학년</th><th>반</th><th>번호</th><th>성명</th><th>특기사항</th><th>글자수</th></tr></thead><tbody>'
+    for (const s of STUDENTS)
+      html += `<tr><td>6</td><td>3</td><td>${s}</td><td>${NAMES[s - 1]}</td><td><textarea>${s === 2 ? '기존 특기사항' : ''}</textarea></td><td>0</td></tr>`
+    html += '</tbody></table>'
+  }
+  document.getElementById('grid').innerHTML = html
+
+  // ?cpr=1: eXBuilder6 런타임(window.cpr)을 흉내 냅니다. API 모양은 추정이며(2차에서 실제 구조로 확인),
+  // 엔진의 cpr 경로가 일관되게 동작하는지와 성명 열을 읽지 않는지 확인하는 용도입니다.
+  if (new URLSearchParams(location.search).get('cpr') === '1') {
+    window.__nameReads = 0
+    let cols
+    const data = []
+    if (screen === '교과평가') {
+      cols = [
+        { name: 'STD_NO', label: '번호' }, { name: 'STD_NM', label: '성명' }, { name: 'AREA_NM', label: '영역' },
+        { name: 'ACHV_STD', label: '성취기준' }, { name: 'LVL_CD', label: '단계', combo: true }, { name: 'EVL_RSLT', label: '평가결과', edit: true },
+      ]
+      for (const s of STUDENTS)
+        for (const [i, code] of ['[6국05-01]', '[6국05-02]'].entries())
+          data.push({ STD_NO: i === 0 ? String(s) : '', STD_NM: NAMES[s - 1], AREA_NM: '문학', ACHV_STD: code + ' 성취기준 본문', LVL_CD: s === 2 && i === 0 ? '3' : '', EVL_RSLT: s === 2 && i === 0 ? '기존 결과' : '' })
+    } else {
+      cols = [{ name: 'STD_NO', label: '번호' }, { name: 'STD_NM', label: '성명' }, { name: 'BHV_OPN', label: '행동특성 및 종합의견', edit: true }]
+      for (const s of STUDENTS) data.push({ STD_NO: s, STD_NM: NAMES[s - 1], BHV_OPN: s === 2 ? '기존 행발' : '' })
+    }
+    const items = [['매우잘함', '1'], ['잘함', '2'], ['보통', '3'], ['노력요함', '4'], ['임의입력', '9']].map(([label, value]) => ({ label, value }))
+    const grid = {
+      type: 'grid',
+      id: 'grdMain',
+      header: { getCellCount: () => cols.length, getColumn: (i) => ({ text: cols[i].label, targetColumnName: cols[i].name, colIndex: i }) },
+      detail: {
+        getCellCount: () => cols.length,
+        getColumn: (i) => ({ columnName: cols[i].name, colIndex: i, control: cols[i].combo ? { type: 'combobox', getItems: () => items } : cols[i].edit ? { type: 'textarea', readOnly: false } : null }),
+      },
+      dataSet: { getColumnNames: () => cols.map((c) => c.name) },
+      getRowCount: () => data.length,
+      getCellValue: (r, c) => {
+        if (c === 'STD_NM') window.__nameReads++
+        return data[r] ? data[r][c] : undefined
+      },
+      setCellValue: (r, c, v) => { data[r][c] = v },
+      redraw() {},
+    }
+    const app = { id: 'SCR_MOCK', title: title, getContainer: () => ({ getAllRecursiveChildren: () => [grid, { type: 'button', id: 'btnSave' }] }) }
+    window.cpr = { VERSION: 'mock-1', core: { Platform: { INSTANCE: { getAllRunningAppInstances: () => [app] } } } }
+    window.__cprData = data
+  }
+
+  const confirmDlg = document.getElementById('dlg-confirm')
+  const infoDlg = document.getElementById('dlg-info')
+  document.getElementById('btn-save').addEventListener('click', () => {
+    window.__saveClicks++
+    confirmDlg.hidden = false
+  })
+  document.getElementById('dlg-cancel').addEventListener('click', () => { confirmDlg.hidden = true })
+  document.getElementById('dlg-ok').addEventListener('click', () => {
+    window.__confirmClicks++
+    window.__saved = true
+    confirmDlg.hidden = true
+    setTimeout(() => { infoDlg.hidden = false }, 200)
+  })
+  document.getElementById('dlg-info-ok').addEventListener('click', () => {
+    window.__confirmClicks++
+    infoDlg.hidden = true
+  })
+})()
+</script>
+</body>
+</html>
