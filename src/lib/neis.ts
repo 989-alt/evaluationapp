@@ -46,7 +46,7 @@ export function buildSubjectPayloads(plan: EvalPlan | null, results: StudentResu
         const std = byId.get(id)
         const level = sc.levels[i]
         if (!std || level === undefined) return
-        standards.push({ code: std.code, level: LEVEL_SHORT[level], criterion: std.criteria[level] ?? '' })
+        standards.push({ code: std.code, level: LEVEL_SHORT[level], criterion: std.criteria[level] ?? '', text: std.text, area: std.area })
       })
       rows.push({ student: r.student, text, standards })
     }

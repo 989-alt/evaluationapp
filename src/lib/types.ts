@@ -123,6 +123,7 @@ export interface NeisPayload {
   rows: Array<{
     student: number
     text: string
-    standards?: Array<{ code: string; level: string; criterion: string }>
+    /** text·area는 나이스 성취기준 행을 찾는 데 씁니다(코드가 본문에 없을 때 본문·영역으로 대응) */
+    standards?: Array<{ code: string; level: string; criterion: string; text?: string; area?: string }>
   }>
 }
