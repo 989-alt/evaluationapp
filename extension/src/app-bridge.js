@@ -24,7 +24,15 @@
         row.standards = r.standards
           .filter((s) => s && typeof s === 'object' && typeof s.code === 'string')
           .slice(0, 100)
-          .map((s) => ({ code: str(s.code, 100), level: str(s.level, 20) ?? '', criterion: str(s.criterion, 5000) ?? '' }))
+          .map((s) => {
+            const o = { code: str(s.code, 100), level: str(s.level, 20) ?? '', criterion: str(s.criterion, 5000) ?? '' }
+            // 선택: 영역·성취기준 본문 (웹앱이 넣어 주면 나이스 행과 짝짓기에 씀)
+            const area = str(s.area, 40)
+            const text = str(s.text, 500)
+            if (area) o.area = area
+            if (text) o.text = text
+            return o
+          })
       }
       rows.push(row)
       if (rows.length >= 200) break

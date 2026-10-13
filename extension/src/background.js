@@ -14,7 +14,7 @@ function isAppUrl(url) {
   }
 }
 const SCAN_MAX_BYTES = 300 * 1024
-const TIMEOUT = { ping: 1500, detect: 15000, scan: 15000, inspect: 20000, fill: 11 * 60 * 1000, stop: 3000 }
+const TIMEOUT = { ping: 1500, detect: 15000, scan: 20000, inspect: 20000, fill: 11 * 60 * 1000, stop: 3000 }
 const KINDS = ['subject', 'behavior', 'creative']
 
 // ---------- 데이터 ----------
@@ -30,7 +30,13 @@ function cleanPayloads(list) {
         if (Array.isArray(r.standards))
           row.standards = r.standards
             .filter((s) => s && typeof s.code === 'string')
-            .map((s) => ({ code: s.code, level: String(s.level ?? ''), criterion: String(s.criterion ?? '') }))
+            .map((s) => {
+              const o = { code: s.code, level: String(s.level ?? ''), criterion: String(s.criterion ?? '') }
+              // 선택: 영역·성취기준 본문 (나이스 성취기준 칸에 코드가 없을 때 짝짓기에 씀)
+              if (typeof s.area === 'string' && s.area) o.area = s.area.slice(0, 40)
+              if (typeof s.text === 'string' && s.text) o.text = s.text.slice(0, 500)
+              return o
+            })
         return row
       })
     const q = { version: 1, createdAt: Number(p.createdAt) || Date.now(), kind: p.kind, rows }

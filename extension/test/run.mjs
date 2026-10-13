@@ -17,6 +17,8 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const EXT = resolve(HERE, '..')
 const ENGINE = join(EXT, 'src', 'neis-main.js')
 const SCREENS = ['교과평가', '학기말종합의견', '행동특성', '학생부자료기록', '동아리활동관리', '진로활동관리']
+// 실제 나이스 모양(cpr)에는 자율활동관리도 있음
+const CPR_SCREENS = ['교과평가', '학기말종합의견', '행동특성', '학생부자료기록', '자율활동관리', '동아리활동관리', '진로활동관리']
 const NAMES = ['학생A', '학생B', '학생C', '학생D']
 
 let pass = 0
@@ -32,6 +34,7 @@ function ok(cond, label, extra) {
 }
 const eq = (a, b, label) => ok(JSON.stringify(a) === JSON.stringify(b), label, { got: a, want: b })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const byte = (t) => Buffer.byteLength(t)
 async function until(fn, ms = 5000, step = 100) {
   const t0 = Date.now()
   for (;;) {
@@ -153,6 +156,18 @@ for (const screen of SCREENS) {
   ok(typeof scan.dom.headerHtml === 'string' && scan.dom.headerHtml.includes('번호'), `${screen}: scan headerHtml`)
   ok(scan.path === '/mock-neis.html' && !scanJson.includes('screen='), `${screen}: scan은 pathname만`)
 
+  // 학생부자료기록: 자율·동아리·진로 화면의 글이 합쳐지는 화면 → 자동 입력 대상 아님
+  if (screen === '학생부자료기록') {
+    eq(d.blocked, 'not-a-target', `${screen}: detect blocked not-a-target`)
+    const before = JSON.stringify(await readMock(page, screen))
+    const rr = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor(screen, { mode: 'overwrite', save: true }))
+    ok(rr.error === 'not-a-target' && rr.notes.some((n) => n.includes('자동 입력 대상이 아닙니다')), `${screen}: 입력 거부`, rr)
+    const ins = await page.evaluate((job) => window.__sgbNeis.inspect(job), jobFor(screen))
+    eq(ins.error, 'not-a-target', `${screen}: 인식 검사도 거부`)
+    ok(JSON.stringify(await readMock(page, screen)) === before && (await counters(page)).save === 0, `${screen}: 쓰기·저장 없음`)
+    continue
+  }
+
   // 덮어쓰기 + 저장 안 함
   const r1 = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor(screen, { mode: 'overwrite', save: false }))
   const v1 = await readMock(page, screen)
@@ -203,15 +218,15 @@ for (const screen of SCREENS) {
   }
 }
 
-// 학생부자료기록 · 진로 영역
+// 학생부자료기록: 진로·동아리 데이터도 거부 (각 관리 화면에서 입력)
 {
-  console.log('[엔진] 학생부자료기록 · 진로')
+  console.log('[엔진] 학생부자료기록 · 진로/동아리도 거부')
   await openMock(page, '학생부자료기록')
-  const r = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor('학생부자료기록', { area: '진로', mode: 'empty', save: false }))
-  const v = await readMock(page, '학생부자료기록')
-  eq(r.filled, 3, '진로: 3명 입력')
-  eq(v.filter((x) => x.area === '진로활동').map((x) => x.text), ['학생부자료기록 문장 1', '학생부자료기록 문장 2', '학생부자료기록 문장 3', ''], '진로: 진로활동 행만')
-  ok(v.filter((x) => x.area === '자율동아리' || x.area === '동아리활동').every((x) => x.text === ''), '진로: 동아리 행은 그대로')
+  for (const [area, creative] of [['진로', '진로'], ['동아리', '동아리']]) {
+    const r = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor('학생부자료기록', { area, creative, mode: 'append', joiner: ' ', save: true }))
+    eq(r.error, 'not-a-target', `학생부자료기록 ${area}: 거부`)
+  }
+  ok((await readMock(page, '학생부자료기록')).every((x) => !x.text || !x.text.includes('문장')), '학생부자료기록: 쓰기 없음')
 }
 
 // 중지
@@ -235,7 +250,7 @@ for (const screen of SCREENS) {
 }
 
 // 두 반이 한 표에 섞인 경우: 떨어져서 다시 나오는 번호는 건너뜀
-for (const screen of ['교과평가', '학생부자료기록']) {
+for (const screen of ['교과평가']) {
   console.log(`[엔진] 두 반 · ${screen}`)
   await page.goto(MOCK(screen) + '&classes=2')
   await page.addScriptTag({ path: ENGINE })
@@ -375,12 +390,13 @@ const APP = {
   학기말종합의견: 'edu/sw/els/scr/es/els_scres10_m00$1',
   행동특성: 'edu/sw/els/sdl/bg/els_sdlbg00_m00$1',
   학생부자료기록: 'edu/sw/els/sdl/ce/els_sdlce06_m00$2',
+  자율활동관리: 'edu/sw/els/sdl/ce/els_sdlce00_m00$2',
   동아리활동관리: 'edu/sw/els/sdl/ce/els_sdlce01_m06$1',
   진로활동관리: 'edu/sw/els/sdl/ce/els_sdlce04_m00$2',
 }
-const TEXT_COL = { 학기말종합의견: 'gnrlzOpiCn', 행동특성: 'gnrlzOpiCn', 학생부자료기록: 'speclActSpablMteCn', 동아리활동관리: 'speclActSpablMteCn', 진로활동관리: 'speclActSpablMteCn' }
+const TEXT_COL = { 학기말종합의견: 'gnrlzOpiCn', 행동특성: 'gnrlzOpiCn', 학생부자료기록: 'speclActSpablMteCn', 자율활동관리: 'speclActSpablMteCn', 동아리활동관리: 'speclActSpablMteCn', 진로활동관리: 'speclActSpablMteCn' }
 const ALL21 = Array.from({ length: 21 }, (_, i) => i + 1)
-const FAKE = ['가상학생', '2014-03-', '희망 가상', '가상동아리', 'user1']
+const FAKE = ['가상학생', '2014-03-', '희망 가상', '가상동아리', 'user1', '홍길동', '김철수', '이영희']
 const LV = { 잘함: 'B', '매우 잘함': 'A', '노력 요함': 'D' }
 function cprJob(screen, students, extra = {}) {
   if (screen === '교과평가')
@@ -412,13 +428,29 @@ const personalReads = () => page.evaluate(() => Object.entries(window.__personal
 const mock = (fn, arg) => page.evaluate(([fn, arg]) => window.__mock[fn](arg), [fn, arg])
 const visKey = () => page.evaluate(() => window.__mock.visibleKey)
 
-for (const screen of SCREENS) {
+for (const screen of CPR_SCREENS) {
   console.log(`[cpr 실제 모양] ${screen}`)
   await openCpr(screen)
   const key = await visKey()
   const d = await page.evaluate(() => window.__sgbNeis.detect())
   eq([d.screen, d.strategy, d.knownApp, d.activeApp, d.ready], [screen, 'cpr-known', true, APP[screen], true], `cpr실제 ${screen}: 보이는 앱으로 화면 인식 (제목은 교과평가)`)
   eq(d.rows, screen === '교과평가' ? 63 : screen === '학생부자료기록' ? 105 : 21, `cpr실제 ${screen}: 데이터셋 행 수`)
+  if (screen === '학생부자료기록') {
+    // 확인만 하는 화면: 인식은 하지만 입력·인식 검사는 거부
+    eq(d.blocked, 'not-a-target', 'cpr실제 학생부자료기록: detect blocked')
+    const snap = await mock('snapshot')
+    const ins = await page.evaluate((j) => window.__sgbNeis.inspect(j), cprJob(screen, ALL21))
+    const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob(screen, ALL21, { mode: 'overwrite', save: true }))
+    ok(ins.error === 'not-a-target' && r.error === 'not-a-target', 'cpr실제 학생부자료기록: 거부', { ins: ins.error, r: r.error })
+    ok((await mock('snapshot')) === snap && (await page.evaluate(() => window.__saveClicks)) === 0, 'cpr실제 학생부자료기록: 쓰기·저장 없음')
+    const scan = await page.evaluate(() => window.__sgbNeis.scan())
+    const sj = JSON.stringify(scan)
+    ok(!FAKE.some((f) => sj.includes(f)), 'cpr실제 학생부자료기록: scan에 개인정보 값 없음')
+    const ka = scan.known.apps.find((x) => x.id === APP[screen])
+    const dist = ka && ka.distinct && ka.distinct.actScNm2
+    ok(dist && dist.values.some((x) => x.value === '자율·자치활동 동아리활동' && x.count === 21) && dist.distinct === 5, 'cpr실제 학생부자료기록: scan 영역 값 분포(actScNm2)', dist)
+    continue
+  }
 
   // 인식 검사: 쓰기 없음 (이 단계부터 개인정보 열 읽기를 셈)
   await resetReads()
@@ -449,6 +481,7 @@ for (const screen of SCREENS) {
   ok((await mock('redraws', key)) >= 1, `cpr실제 ${screen}: grid.redraw`)
   const writeCols = await page.evaluate(() => Object.keys(window.__writeCols))
   const allowed = screen === '교과평가' ? ['evlCtrCd', 'evlCtrCn'] : [TEXT_COL[screen]]
+  ok(typeof r.modifiedRows === 'number' && r.modifiedRows >= 21 && ins.modifiedRows === 0, `cpr실제 ${screen}: 바뀐 행 수 (인식 검사 0 → 입력 후 ${r.modifiedRows})`, { ins: ins.modifiedRows, r: r.modifiedRows })
   ok(writeCols.every((c) => allowed.includes(c)), `cpr실제 ${screen}: 쓴 열은 ${allowed.join('·')}만 (length·희망분야 안 씀)`, writeCols)
   const rows = await mock('rows', key)
   const states = await mock('states', key)
@@ -457,11 +490,7 @@ for (const screen of SCREENS) {
     eq(codes, ALL21.flatMap(() => ['B', 'A', 'D']), 'cpr실제 교과평가: 63행 모두 단계 코드(라벨→코드, 띄어쓰기 무시)')
     eq(rows.map((x) => x.evlCtrCn), ALL21.flatMap((s) => [`c1-${s}`, `c2-${s}`, `c3-${s}`]), 'cpr실제 교과평가: 덮어쓰기 → 나이스 자동 문구도 데이터 평가결과로')
     eq(r.autoFilled, 21, 'cpr실제 교과평가: 자동 채움 21칸 보고')
-    ok(states.every((x) => x === 2), 'cpr실제 교과평가: 모든 행 변경 상태')
-  } else if (screen === '학생부자료기록') {
-    const auto = rows.filter((x) => x.actScNm === '자율·자치활동')
-    eq(auto.map((x) => x.speclActSpablMteCn), ALL21.map((s) => `${screen} 문장 ${s}`), 'cpr실제 창체: 자율·자치활동 행 21개')
-    ok(rows.filter((x) => x.actScNm !== '자율·자치활동').every((x) => x.speclActSpablMteCn === ''), 'cpr실제 창체: 다른 영역(동아리·청소년단체·스포츠클럽·진로)은 그대로')
+    ok(states.every((x) => x === 4), 'cpr실제 교과평가: 모든 행 변경 상태(4 UPDATED)')
   } else {
     eq(rows.map((x) => x[TEXT_COL[screen]]), ALL21.map((s) => `${screen} 문장 ${s}`), `cpr실제 ${screen}: 21행 모두 입력`)
   }
@@ -502,8 +531,8 @@ for (const [q, label] of [['&lvl=row', '행마다 항목 (행 선택 후 다시 
   const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('교과평가', [1, 21], { mode: 'overwrite', save: false }))
   const rows = await mock('rows', 'm02')
   ok(!r.error && r.filled === 2 && r.cells === 12 && r.verifyFailed === 0, `${label}: 2명 12칸`, r)
-  eq([rows[0].evlCtrCd, rows[61].evlCtrCd, rows[62].evlCtrCn], ['B', 'A', 'c3-21'], `${label}: 코드·결과`)
-  if (q === '&lvl=row') eq([await mock('selectCalls', 'm02'), await mock('selected', 'm02')], [1, undefined], `${label}: 한 번만 행을 고른 뒤 원래 선택(없음)으로 되돌림`)
+  eq([rows[0].evlCtrCd, rows[61].evlCtrCd, rows[62].evlCtrCn], q === '&lvl=row' ? ['B0', 'A1', 'c3-21'] : ['B', 'A', 'c3-21'], `${label}: 코드·결과`)
+  if (q === '&lvl=row') eq([await mock('selectCalls', 'm02'), await mock('selected', 'm02')], [6, undefined], `${label}: 행마다 고른 뒤 원래 선택(없음)으로 되돌림`)
 }
 {
   console.log('[cpr 실제 모양] 교과평가 · 단계 코드 없음')
@@ -590,8 +619,8 @@ for (const q of ['&noel=1', '&noel=1&nomdi=1']) {
 // 중지 (데이터셋 방식도 키 입력으로 멈추고 저장하지 않음)
 {
   console.log('[cpr 실제 모양] 중지')
-  await openCpr('학생부자료기록')
-  const p = page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('학생부자료기록', ALL21, { mode: 'overwrite', save: true, delayMs: 400 }))
+  await openCpr('자율활동관리')
+  const p = page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('자율활동관리', ALL21, { mode: 'overwrite', save: true, delayMs: 400 }))
   await sleep(100)
   await page.keyboard.press('Shift')
   const r = await p
@@ -698,8 +727,8 @@ for (const [vis, forced] of [['진로활동관리', '동아리활동관리'], ['
 }
 {
   console.log('[중지] 화면을 누르면 멈춤')
-  await openCpr('학생부자료기록')
-  const p = page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('학생부자료기록', ALL21, { mode: 'overwrite', save: true, delayMs: 400 }))
+  await openCpr('자율활동관리')
+  const p = page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('자율활동관리', ALL21, { mode: 'overwrite', save: true, delayMs: 400 }))
   await sleep(100)
   await page.mouse.click(5, 5)
   const r = await p
@@ -711,21 +740,254 @@ for (const [vis, forced] of [['진로활동관리', '동아리활동관리'], ['
   const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('교과평가', [4], { mode: 'empty', save: false }))
   const rows = (await mock('rows', 'm02')).slice(9, 12).map((x) => x.evlCtrCd + '/' + x.evlCtrCn)
   eq(rows, ['B/나이스 기준문 B', 'C/', 'D/c3-4'], '다른 단계(C)가 있는 행은 평가결과를 넣지 않음')
-  ok(r.levelConflict === 1 && r.notes.some((n) => n.includes('단계가 이미 다른 값인 행 1개')), '다른 단계: 안내', r)
+  ok(r.levelConflict === 1 && r.notes.some((n) => n.includes('단계가 이미 있는 행 1개')), '다른 단계: 안내', r)
 }
 {
   console.log('[인식 검사] 행 선택을 바꾸지 않음 · 단계 옆 열')
   await openCpr('교과평가', '&lvl=row')
   await page.evaluate(() => window.__mock.select('m02', 5))
   const ins = await page.evaluate((j) => window.__sgbNeis.inspect(j), cprJob('교과평가', [1, 2]))
-  eq([await mock('selectCalls', 'm02'), await mock('selected', 'm02')], [1, 5], '인식 검사: 행을 고르지 않음')
-  ok(ins.levelCodes === null && ins.notes.some((n) => n.includes('행 선택 필요')), '인식 검사: 항목이 행마다면 null + 안내', ins)
+  // 인식 검사: 서로 다른 성취기준 두 행을 잠깐 골라 항목을 읽고 원래 선택(5)으로 되돌림
+  eq([await mock('selectCalls', 'm02'), await mock('selected', 'm02')], [4, 5], '인식 검사: 두 행을 골랐다가 원래 선택(5)으로')
+  ok(JSON.stringify(ins.levelCodes) === JSON.stringify({ 매우잘함: 'A0', 잘함: 'B0', 보통: 'C0', 노력요함: 'D0' }) && ins.levelProbe && ins.levelProbe.restored && ins.notes.some((n) => n.includes('성취기준마다 다릅니다')), '인식 검사: 행을 골라 읽은 단계 코드 + 성취기준마다 다름 안내', ins)
   const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('교과평가', [1, 2], { mode: 'overwrite', save: false }))
   ok(!r.error && r.cells === 12, '행마다 항목: 입력', r)
-  eq([await mock('selectCalls', 'm02'), await mock('selected', 'm02')], [3, 5], '입력: 한 번 고르고 원래 선택(5)으로 되돌림')
+  eq([await mock('selectCalls', 'm02'), await mock('selected', 'm02')], [11, 5], '입력: 행마다 고르고 원래 선택(5)으로 되돌림')
   await openCpr('교과평가')
   const ins2 = await page.evaluate((j) => window.__sgbNeis.inspect(j), cprJob('교과평가', [1]))
-  eq(ins2.levelSideColumns, { rows: 1, evlCtrNm: 1, evlLvlCd: 0, evlLvlNm: 0 }, '인식 검사: 단계가 있는 행의 단계 이름·성취수준 열')
+  eq(ins2.levelSideColumns, { rows: 1, evlCtrNm: 1, evlLvlCd: 1, evlLvlNm: 1 }, '인식 검사: 단계가 있는 행의 단계 이름·성취수준 열')
+}
+
+// ---------- 3차: 행마다 단계 항목 · 성취기준 짝짓기 · 변경 상태 · 이어쓰기 · 자율활동관리 구간 · 지원하지 않는 화면 ----------
+const evalRows = () => mock('rows', 'm02')
+{
+  console.log('[3차] 교과평가 · 행마다 단계 항목 (selectRows 뒤 불러옴, 콤보로 고르면 나이스가 평가결과 채움)')
+  await openCpr('교과평가', '&lvl=row')
+  await page.evaluate(() => window.__mock.select('m02', 7))
+  const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('교과평가', [1, 3], { mode: 'empty', save: true }))
+  const rows = await evalRows()
+  const got = [0, 1, 2, 6, 7, 8].map((i) => rows[i].evlCtrCd + '/' + rows[i].evlCtrCn)
+  eq(got, ['B0/나이스 기준문 B0', 'A1/나이스 기준문 A1', 'D2/나이스 기준문 D2', 'B0/나이스 기준문 B0', 'A1/나이스 기준문 A1', 'D2/나이스 기준문 D2'], '행마다: 성취기준마다 다른 코드 · "노력요함 : …" 항목도 찾음 · 나이스가 채운 평가결과 유지(빈 칸만)')
+  ok(r.autoFilled === 6 && r.levelUnavailable === 0 && r.saved && r.modifiedRows === 6, '행마다: 자동 채움 6 · 저장 · 바뀐 행 6', r)
+  ok((await page.evaluate(() => window.__comboPuts)) === 6, '행마다: 고른 행의 콤보로 골랐음 (나이스 변경 처리)')
+  eq(await mock('selected', 'm02'), 7, '행마다: 원래 고른 행(7)으로 되돌림')
+  ok(r.notes.some((n) => n.includes('행마다 골라') && n.includes('selectRows')), '행마다: 안내', r.notes)
+
+  await openCpr('교과평가', '&lvl=row')
+  const r2 = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('교과평가', [2], { mode: 'overwrite', save: false }))
+  const rows2 = await evalRows()
+  eq([3, 4, 5].map((i) => rows2[i].evlCtrCd + '/' + rows2[i].evlCtrCn), ['B0/c1-2', 'A1/c2-2', 'D2/c3-2'], '행마다 덮어쓰기: 데이터 평가결과로')
+  ok(!r2.error && r2.verifyFailed === 0, '행마다 덮어쓰기: 확인', r2)
+}
+{
+  console.log('[3차] 교과평가 · focusCell로만 항목이 나옴')
+  await openCpr('교과평가', '&lvl=rowfocus')
+  const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('교과평가', [1], { mode: 'overwrite', save: false }))
+  const rows = await evalRows()
+  ok(!r.error && r.cells === 6 && rows[0].evlCtrCd === 'B0' && rows[2].evlCtrCd === 'D2', 'focusCell: 입력', r)
+  ok((await mock('focusCalls', 'm02')) >= 3 && r.notes.some((n) => n.includes('focusCell')), 'focusCell: 방법 기억', r.notes)
+}
+{
+  console.log('[3차] 교과평가 · 한 성취기준은 항목이 안 나옴 → 그 행만 건너뜀')
+  await openCpr('교과평가', '&lvl=rowsome')
+  const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('교과평가', [1, 2], { mode: 'overwrite', save: true }))
+  const rows = await evalRows()
+  eq([0, 1, 2, 3, 4, 5].map((i) => rows[i].evlCtrCd + '/' + rows[i].evlCtrCn), ['B0/c1-1', 'A1/c2-1', '/', 'B0/c1-2', 'A1/c2-2', '/'], '항목 없는 행: 단계·평가결과 모두 건너뜀')
+  ok(!r.error && r.levelUnavailable === 2 && r.saved && r.notes.some((n) => n.includes('건너뛴 행 2개') && n.includes('1, 2번')), '항목 없는 행: levelUnavailable 2 · 나머지 저장', r)
+}
+{
+  console.log('[3차] 교과평가 · 성취기준 코드 열 끝 공백 (sccesCtrCd "6국05-01 ")')
+  await openCpr('교과평가', '&stdcode=space')
+  const ins = await page.evaluate((j) => window.__sgbNeis.inspect(j), cprJob('교과평가', [1, 2]))
+  ok(ins.pairingHow && ins.pairingHow.code === 6 && ins.pairingHow.order === 0, '끝 공백: 코드로 짝지음', ins.pairingHow)
+}
+{
+  console.log('[3차] 교과평가 · 성취기준 칸에 코드 없음 (내부 코드 "12임… ") → 순서·영역·본문으로')
+  await openCpr('교과평가', '&stdcode=real')
+  // 순서
+  const ins = await page.evaluate((j) => window.__sgbNeis.inspect(j), cprJob('교과평가', [1, 2]))
+  ok(ins.pairingHow && ins.pairingHow.order === 6 && ins.notes.some((n) => n.includes('성취기준을 순서로 맞춤')), '코드 없음: 순서로 짝짓고 안내', ins)
+  ok(ins.pairing.length === 6 && ins.pairing.every((x) => x.how === 'order' && x.neisLen > 10 && !/\[/.test(x.neisText)) && ins.pairing[2].area === '문법', '코드 없음: 짝 목록(행·영역·글자 수)', ins.pairing)
+  let r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('교과평가', [1], { mode: 'overwrite', save: false }))
+  let rows = await evalRows()
+  eq([0, 1, 2].map((i) => rows[i].evlCtrCd + '/' + rows[i].evlCtrCn), ['B/c1-1', 'A/c2-1', 'D/c3-1'], '코드 없음: 순서대로 입력')
+  ok(r.notes.some((n) => n.includes('순서로 맞춤')), '코드 없음: 입력 결과에도 안내', r.notes)
+  // 영역이 있으면 데이터 순서가 달라도 영역으로
+  await openCpr('교과평가', '&stdcode=real')
+  const areaJob = cprJob('교과평가', [2], { mode: 'overwrite', save: false })
+  areaJob.rows[0].standards = [
+    { code: '[6국05-03]', level: '보통', criterion: 'c3', area: '문법' },
+    { code: '[6국05-01]', level: '잘함', criterion: 'c1', area: '문학' },
+    { code: '[6국05-02]', level: '매우잘함', criterion: 'c2', area: '매체' },
+  ]
+  r = await page.evaluate((j) => window.__sgbNeis.fill(j), areaJob)
+  rows = await evalRows()
+  eq([3, 4, 5].map((i) => rows[i].evlCtrCd + '/' + rows[i].evlCtrCn), ['B/c1', 'A/c2', 'C/c3'], '코드 없음 + 영역: 영역으로 짝지음')
+  // 성취기준 본문이 있으면 본문으로
+  await openCpr('교과평가', '&stdcode=real')
+  const textJob = cprJob('교과평가', [3], { mode: 'overwrite', save: false })
+  textJob.rows[0].standards = [
+    { code: '[6국05-02]', level: '매우잘함', criterion: 't2', text: '[6국05-02] 작품의 구성 요소를 이해하며 작품을 감상한다.' },
+    { code: '[6국05-01]', level: '잘함', criterion: 't1', text: '작품 속 인물의 삶을 찾고 자신의 삶과 관련지어 이해한다' },
+  ]
+  const ti = await page.evaluate((j) => window.__sgbNeis.inspect(j), textJob)
+  ok(ti.pairingHow.text === 2 && ti.unmatchedStandards.length === 0, '코드 없음 + 본문: 본문으로 짝지음', ti.pairingHow)
+  r = await page.evaluate((j) => window.__sgbNeis.fill(j), textJob)
+  rows = await evalRows()
+  eq([6, 7, 8].map((i) => rows[i].evlCtrCd + '/' + rows[i].evlCtrCn), ['B/t1', 'A/t2', '/'], '코드 없음 + 본문: 맞는 행에만')
+  // 개수가 다르고 영역이 없으면 순서로 맞추지 않음
+  await openCpr('교과평가', '&stdcode=real')
+  const fewJob = cprJob('교과평가', [4], { mode: 'overwrite', save: false })
+  fewJob.rows[0].standards = fewJob.rows[0].standards.slice(0, 2)
+  const fi = await page.evaluate((j) => window.__sgbNeis.inspect(j), fewJob)
+  ok(fi.tasks === 0 && fi.unmatchedStandards.length === 2 && fi.notes.some((n) => n.includes('순서로 맞추지 못한 학생: 4번')), '코드 없음 + 개수 다름: 짝짓지 않음', fi)
+}
+{
+  console.log('[3차] 변경 상태로 안 바뀌면 저장 안 함')
+  await openCpr('진로활동관리', '&nostate=1')
+  const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('진로활동관리', [1, 3], { mode: 'overwrite', save: true }))
+  ok(r.cells === 2 && r.modifiedRows === 0 && r.saved === false && r.notes.some((n) => n.includes('변경 상태로 바뀌지 않아')), 'nostate: 저장 안 누름 + 안내', r)
+  eq(await page.evaluate(() => window.__saveClicks), 0, 'nostate: 저장 클릭 0')
+}
+{
+  console.log('[3차] 구조 수집 · 단계 콤보 확인 · 데이터 컨트롤 · 값 분포')
+  await openCpr('교과평가', '&lvl=row')
+  await resetReads()
+  const scan = await page.evaluate(() => window.__sgbNeis.scan())
+  const sj = JSON.stringify(scan)
+  ok(!FAKE.some((f) => sj.includes(f)), '구조 수집: 개인정보 값 없음 (개인정보 데이터셋·이름 같은 값 제외)', FAKE.filter((f) => sj.includes(f)))
+  eq(await personalReads(), 0, '구조 수집: 개인정보 열 읽기 0')
+  const lp = scan.known.levelProbe
+  ok(lp && lp.itemsAtRest.length === 0 && lp.itemsAfterSelect.map((x) => x.value).join() === 'A0,B0,C0,D0' && lp.rows.length === 2 && lp.rows[1].items.map((x) => x.value).join() === 'A1,B1,C1,D1' && lp.restored === true, '구조 수집: 쉴 때 항목 없음 → 행 0·1을 골라 성취기준마다 다른 항목', lp)
+  eq(await mock('selected', 'm02'), undefined, '구조 수집: 원래 선택(없음)으로 되돌림')
+  const dcs = scan.known.dataControls[0].list
+  const byId = Object.fromEntries(dcs.map((x) => [x.id, x]))
+  ok(byId.dsEvlCria && byId.dsEvlCria.rows && byId.dsEvlCria.rows.length === 4 && byId.dsEvlCria.rows[0].evlCtrNm === '매우잘함', '구조 수집: 작은 코드표는 값까지', byId.dsEvlCria)
+  ok(byId.dsStdntList && byId.dsStdntList.personal && !byId.dsStdntList.rows && byId.dsStdntList.columnNames.includes('[개인정보]'), '구조 수집: 개인정보 열이 있는 데이터셋은 값 없이', byId.dsStdntList)
+  ok(byId.dsPrsn && !byId.dsPrsn.rows && byId.dsPrsn.rowsWithheld === 'name-like', '구조 수집: 이름 같은 값이 있으면 값 없이', byId.dsPrsn)
+  ok(byId.dsMain && !byId.dsMain.rows && byId.dsMain.rowCount === 63, '구조 수집: 화면 표 데이터셋은 열·행 수만', byId.dsMain)
+  const ka = scan.known.apps.find((x) => x.id === APP['교과평가'])
+  ok(ka.distinct.evlLvlCd && ka.distinct.evlLvlCd.values[0].value === '4단계' && ka.distinct.evlLvlCd.values[0].count === 63 && ka.distinct.relmNm, '구조 수집: 범주 열 값 분포', ka.distinct)
+  ok(!('sccesCtrCn' in ka.distinct) && !('stdntInfo' in ka.distinct), '구조 수집: 값 분포는 정한 열만')
+}
+{
+  console.log('[3차] 지원하지 않는 화면 (MDI 선택 탭이 알려지지 않은 edu/ 앱)')
+  await openCpr('미지원')
+  const snap = await mock('snapshot')
+  const d = await page.evaluate(() => window.__sgbNeis.detect())
+  ok(d.screen === 'unknown' && d.blocked === 'unsupported-screen' && d.mdiSelected === 'edu/sw/els/sdl/zz/els_sdlzz99_m00$1' && !d.ready, '미지원: 제목·숨은 탭으로 짐작하지 않고 unknown', d)
+  const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('동아리활동관리', [1, 2], { mode: 'overwrite', save: true }))
+  ok(r.error === 'unsupported-screen' && r.notes.some((n) => n.includes('els_sdlzz99_m00')), '미지원: 화면 지정이 있어도 입력 거부', r)
+  ok((await mock('snapshot')) === snap && (await page.evaluate(() => window.__saveClicks)) === 0, '미지원: 쓰기·저장 없음')
+  const scan = await page.evaluate(() => window.__sgbNeis.scan())
+  const sj = JSON.stringify(scan)
+  const u = scan.known.unknownApps.find((x) => x.id === 'edu/sw/els/sdl/zz/els_sdlzz99_m00$1')
+  ok(u && u.visible === true && u.buttons.includes('btnSave') && u.inputs.some((x) => x.id === 'txaMemo' && x.bind === 'speclActSpablMteCn') && u.inputs.some((x) => x.id === 'cmbKind'), '미지원: 구조 수집에 버튼·입력 컨트롤·연결 열', u)
+  ok(u && u.grids[0].rowCount === 21 && u.grids[0].columnNames.includes('[개인정보]') && u.grids[0].headerCols.some((h) => h && h.text === '[개인정보]') && u.grids[0].detailCols.length === 4, '미지원: 표 열 정보(개인정보 가림)', u && u.grids[0])
+  ok(!FAKE.some((f) => sj.includes(f)), '미지원: 구조 수집에 개인정보 없음')
+}
+
+// --- 이어쓰기 (1학기 글 뒤에 2학기 글) ---
+const behText = async (i) => (await mock('rows', 'beh'))[i].gnrlzOpiCn
+for (const [joiner, label] of [['', '바로 이어서'], [' ', '띄어쓰기 한 칸'], ['\n', '줄바꿈 한 번'], ['\n\n', '줄바꿈 두 번'], [' / ', '직접 입력']]) {
+  console.log(`[3차] 이어쓰기 · 행동특성 · ${label}`)
+  await openCpr('행동특성')
+  const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('행동특성', [1, 2], { mode: 'append', joiner, save: true }))
+  eq([await behText(0), await behText(1)], ['행동특성 문장 1', '기존 행발' + joiner + '행동특성 문장 2'], `이어쓰기 ${label}: 빈 칸은 새 글만, 기존 글 뒤에 이음`)
+  ok(r.mode === 'append' && r.joiner === joiner && r.saved && r.cells === 2, `이어쓰기 ${label}: 결과`, r)
+  eq(await page.evaluate(() => Object.keys(window.__writeCols)), ['gnrlzOpiCn'], `이어쓰기 ${label}: 글자수(length) 열은 쓰지 않음`)
+  if (joiner === '\n') {
+    // 다시 실행해도 두 번 붙이지 않음
+    const again = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('행동특성', [1, 2], { mode: 'append', joiner, save: true }))
+    ok(again.cells === 0 && again.already === 2 && again.saved === false && again.notes.some((n) => n.includes('이미 이어져 있음')), '이어쓰기: 다시 실행 → 이미 이어져 있음', again)
+    eq(await behText(1), '기존 행발\n행동특성 문장 2', '이어쓰기: 다시 실행해도 그대로')
+  }
+}
+{
+  console.log('[3차] 이어쓰기 · 교과평가·학기말에서는 빈 칸만으로')
+  await openCpr('학기말종합의견')
+  const r = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('학기말종합의견', [1, 2], { mode: 'append', joiner: ' ', save: false }))
+  const rows = await mock('rows', 'sem')
+  ok(r.mode === 'empty' && rows[0].gnrlzOpiCn === '학기말종합의견 문장 1' && rows[1].gnrlzOpiCn === '기존 의견' && r.notes.some((n) => n.includes('이어쓰기는 이 화면에서 쓰지 않습니다')), '학기말: 이어쓰기 → 빈 칸만 + 안내', r)
+  await openCpr('교과평가')
+  const r2 = await page.evaluate((j) => window.__sgbNeis.fill(j), cprJob('교과평가', [2], { mode: 'append', joiner: ' ', save: false }))
+  const e = await evalRows()
+  ok(r2.mode === 'empty' && e[3].evlCtrCn === '기존 결과' && r2.notes.some((n) => n.includes('이어쓰기는 이 화면에서 쓰지 않습니다')), '교과평가: 이어쓰기 → 빈 칸만', r2)
+}
+{
+  console.log('[3차] 인식 검사 · 글 길이(바이트)와 참고용 바이트 초과 알림')
+  await openCpr('행동특성')
+  const long = '가'.repeat(500) // 1500바이트
+  const job = cprJob('행동특성', [1, 2], { mode: 'append', joiner: ' ' })
+  job.rows[1].text = long
+  const snap = await mock('snapshot')
+  const ins = await page.evaluate((j) => window.__sgbNeis.inspect(j), job)
+  const l2 = ins.lengths.find((x) => x.student === 2)
+  ok(ins.referenceBytes === 1500 && l2.existing === byte('기존 행발') && l2.add === 1500 && l2.combined === byte('기존 행발') + 1 + 1500 && l2.over === true && !ins.lengths.find((x) => x.student === 1).over, '인식 검사: 기존·새·합친 바이트', ins.lengths)
+  ok(ins.warnings.includes('over-reference-bytes') && ins.notes.some((n) => n.includes('참고용 1500바이트') && n.includes('2번')), '인식 검사: 참고용 초과 알림', ins)
+  eq(await mock('snapshot'), snap, '인식 검사: 쓰지 않음')
+  const r = await page.evaluate((j) => window.__sgbNeis.fill(j), { ...job, save: false })
+  ok(!r.error && r.cells === 2, '참고용 초과는 막지 않음', r)
+}
+
+// --- 자율활동관리: 자율 구간 · 동아리 구간 따로 이어쓰기 ---
+const EX1 = '레이저서바이벌 체험활동에서 협동의 중요성을 알고 노력함. 교내 화재 발생 시 대피 요령을 터득함.'
+const EX2 = '(문화예술부(6-5)) 영화를 시청하며 등장인물의 감정 변화를 파악함.'
+const autSet = (i, v) => mock('setText', ['aut', i, 'speclActSpablMteCn', v])
+const autGet = async (i) => (await mock('rows', 'aut'))[i].speclActSpablMteCn
+const autJob = (aut, club, extra = {}) => ({
+  screen: '자율활동관리',
+  creative: '자율',
+  mode: 'append',
+  joiner: ' ',
+  delayMs: 0,
+  rows: Object.entries(aut).map(([s, text]) => ({ student: Number(s), text })),
+  clubRows: club ? Object.entries(club).map(([s, text]) => ({ student: Number(s), text })) : undefined,
+  ...extra,
+})
+{
+  console.log('[3차] 자율활동관리 · 구간별 이어쓰기')
+  await openCpr('자율활동관리')
+  await autSet(0, EX1 + '\n\n' + EX2) // 1번: 예시 (자율 + 동아리)
+  await autSet(1, EX1 + '\n\n' + EX2) // 2번: 자율만 이어씀
+  await autSet(2, 'a1 문장.\n\na2 문장.\n\n(과학부(6-3)) c1 문장.') // 3번: 세 구간
+  await autSet(3, 'x1 문장.\r\n\r\n(체육부(6-1)) y1 문장.') // 4번: CRLF
+  await autSet(4, '') // 5번: 빈 칸
+  const job = autJob(
+    { 1: '자율2 문장.', 2: '자율2 문장.', 3: 'A 문장.', 4: 'X 문장.', 5: '새 자율.' },
+    { 1: '동아리2 문장.', 3: 'C 문장.', 4: 'Y 문장.' },
+  )
+  const ins = await page.evaluate((j) => window.__sgbNeis.inspect(j), job)
+  const L = Object.fromEntries(ins.lengths.map((x) => [x.student, x]))
+  ok(L[1].sections === 2 && L[1].hasClubSection && L[3].sections === 3 && L[3].hasClubSection && L[5].sections === 0 && L[1].autBytes === byte(EX1) && L[1].clubBytes === byte(EX2) && L[1].addClub === byte('동아리2 문장.'), '자율 인식 검사: 구간 수·동아리 구간·구간별 바이트', ins.lengths)
+  ok(!JSON.stringify(ins).includes('레이저') && !JSON.stringify(ins).includes('문화예술부'), '자율 인식 검사: 구간 글자는 보여 주지 않음')
+  const r = await page.evaluate((j) => window.__sgbNeis.fill(j), { ...job, save: true })
+  eq(await autGet(0), EX1 + ' 자율2 문장.\n\n' + EX2 + ' 동아리2 문장.', '자율 예시: 각 구간 끝에 이어씀 (빈 줄 유지)')
+  eq(await autGet(1), EX1 + ' 자율2 문장.\n\n' + EX2, '자율만: 동아리 구간 그대로')
+  eq(await autGet(2), 'a1 문장.\n\na2 문장. A 문장.\n\n(과학부(6-3)) c1 문장. C 문장.', '세 구간: 괄호로 동아리 구간 찾음')
+  eq(await autGet(3), 'x1 문장. X 문장.\r\n\r\n(체육부(6-1)) y1 문장. Y 문장.', 'CRLF 구분 유지')
+  eq(await autGet(4), '새 자율.', '빈 칸: 새 글만')
+  ok(r.saved && r.cells === 5 && r.mode === 'append', '자율활동관리: 저장', r)
+  eq(await page.evaluate(() => window.__saveByApp), { [APP['자율활동관리']]: 1 }, '자율활동관리: 이 앱의 btnSave')
+  // 다시 실행: 구간마다 이미 이어져 있음
+  const again = await page.evaluate((j) => window.__sgbNeis.fill(j), { ...job, save: true })
+  ok(again.cells === 0 && again.already === 5 && again.saved === false, '자율 다시 실행: 두 번 붙이지 않음', again)
+  eq(await autGet(0), EX1 + ' 자율2 문장.\n\n' + EX2 + ' 동아리2 문장.', '자율 다시 실행: 그대로')
+}
+{
+  console.log('[3차] 자율활동관리 · 동아리 데이터만 (동아리 구간)')
+  await openCpr('자율활동관리')
+  await autSet(0, EX1 + '\n\n' + EX2)
+  await autSet(1, '자율만 있음.')
+  const job = { screen: '자율활동관리', creative: '동아리', mode: 'append', joiner: '\n', delayMs: 0, save: false, rows: [{ student: 1, text: '동아리2 문장.' }, { student: 2, text: '동아리 새 문장.' }] }
+  const r = await page.evaluate((j) => window.__sgbNeis.fill(j), job)
+  eq(await autGet(0), EX1 + '\n\n' + EX2 + '\n동아리2 문장.', '동아리만: 동아리 구간 끝에')
+  eq(await autGet(1), '자율만 있음.\n\n동아리 새 문장.', '동아리만 · 동아리 구간 없음: 새 구간')
+  ok(r.notes.some((n) => n.includes('괄호가 없어 새 구간으로 추가함') && n.includes('2번')), '동아리만: 부서명 괄호 없음 안내', r.notes)
+  const bad = await page.evaluate((j) => window.__sgbNeis.fill(j), { ...job, mode: 'overwrite' })
+  eq(bad.error, 'club-append-only', '동아리 데이터는 이어쓰기로만')
+  const wrong = await page.evaluate((j) => window.__sgbNeis.fill(j), { ...job, creative: '진로' })
+  eq(wrong.error, 'area-mismatch', '진로 데이터는 자율활동관리에 넣지 않음')
 }
 
 // ---------- 2) bridge → 서비스 워커 ----------
@@ -796,6 +1058,7 @@ ok(nameChip.includes('이름 의심 1'), 'e2e: 사전 검사 이름 의심', nam
 const options = await popup.locator('#fill-payload option').allInnerTexts()
 ok(options.length === 2 && options[0] === '과목을 고르세요' && options[1].includes('국어'), 'e2e: 교과평가 → 과목 고르기 + 교과 데이터만', options)
 ok(await popup.locator('#btn-fill').isDisabled(), 'e2e: 과목을 고르기 전에는 자동 입력 꺼짐')
+ok(await popup.locator('#mode-append-item').isHidden(), 'e2e: 교과평가에서는 이어쓰기 숨김')
 const fdet = await popup.evaluate((tabId) => chrome.runtime.sendMessage({ type: 'neis-command', tabId, cmd: 'detect', args: { screen: '행동특성' } }), tabId)
 ok(fdet.screen === '행동특성' && fdet.detectedScreen === '교과평가' && fdet.ready === false, 'e2e: 화면 지정으로 detect', fdet)
 
@@ -843,6 +1106,72 @@ const plog = await popup.locator('#log').innerText()
 ok(plog.includes('2명 입력') && plog.includes('건너뛴 칸 1개') && plog.includes('나이스 데이터 방식') && plog.includes('저장은 누르지 않았습니다'), 'e2e cpr: 미리보기 결과', plog)
 eq(await neisPage.evaluate(() => window.__mock.rows('beh').slice(0, 4).map((r) => r.gnrlzOpiCn)), ['행발 1번 문장임.', '기존 행발', '행발 3번 문장임.', ''], 'e2e cpr: 데이터셋에 입력 (빈 칸만)')
 eq(await neisPage.evaluate(() => window.__saveClicks), 0, 'e2e cpr: 미리보기는 저장 안 누름')
+
+// 이어쓰기 · 이음 고르기 → 기억 (chrome.storage.local fillPrefs)
+ok(await popup.locator('#mode-append-item').isVisible(), 'e2e: 행동특성에서는 이어쓰기 보임')
+ok(await popup.locator('#joiner-row').isHidden(), 'e2e: 이어쓰기 전에는 이음 숨김')
+await popup.click('#mode-append-item')
+ok(await popup.locator('#joiner-row').isVisible(), 'e2e: 이어쓰기면 이음 보임')
+await popup.selectOption('#fill-joiner', 'custom')
+ok(await popup.locator('#joiner-custom-row').isVisible(), 'e2e: 직접 입력 칸')
+await popup.fill('#joiner-custom', ' // ')
+await popup.selectOption('#fill-joiner', 'nl1')
+await sleep(200)
+{
+  const fp = (await swState()).fillPrefs || {}
+  eq([fp.mode, fp.joiner, fp.custom], ['append', 'nl1', ' // '], 'e2e: 입력 방식·이음 저장')
+}
+await popup.goto(`chrome-extension://${extId}/popup/popup.html?tabId=${tabId}`)
+await popup.waitForFunction(() => document.getElementById('screen-name').textContent.includes('행동특성'), null, { timeout: 15000 })
+ok((await popup.evaluate(() => [document.querySelector('input[name=mode]:checked').value, document.getElementById('fill-joiner').value, document.getElementById('joiner-custom').value].join('|'))) === 'append|nl1| // ', 'e2e: 팝업을 다시 열어도 기억')
+await popup.waitForFunction(() => !document.getElementById('btn-preview').disabled, null, { timeout: 5000 })
+await popup.click('#btn-preview')
+await popup.waitForFunction(() => document.getElementById('log').textContent.includes('입력 방식'), null, { timeout: 30000 })
+const alog = await popup.locator('#log').innerText()
+ok(alog.includes('입력 방식: 이어쓰기 · 줄바꿈 한 번') && alog.includes('이미 이어져 있음'), 'e2e: 이어쓰기 결과 로그 (방식 요약 · 이미 이어진 칸)', alog)
+eq(await neisPage.evaluate(() => window.__mock.rows('beh').slice(0, 3).map((r) => r.gnrlzOpiCn)), ['행발 1번 문장임.', '기존 행발\n행발 2번 문장임.', '행발 3번 문장임.'], 'e2e: 이어쓰기 (줄바꿈 한 번)')
+
+// 자율활동관리: 자율 데이터 + 동아리 문장도 같은 칸의 동아리 구간에
+await neisPage.goto('https://sgb-test.neis.go.kr/edu/mock.do?cpr=1&screen=' + encodeURIComponent('자율활동관리'))
+await neisPage.waitForLoadState('load')
+await neisPage.evaluate(() => (window.__mock.rows('aut'), window.__mock.setText(['aut', 0, 'speclActSpablMteCn', '1학기 자율.\n\n(과학부(6-3)) 1학기 동아리.'])))
+await popup.goto(`chrome-extension://${extId}/popup/popup.html?tabId=${tabId}`)
+await popup.waitForFunction(() => document.getElementById('screen-name').textContent.includes('자율활동관리'), null, { timeout: 15000 })
+const aopts = await popup.locator('#fill-payload option').allInnerTexts()
+ok(aopts.length === 3 && aopts[0] === '데이터를 고르세요' && aopts.some((o) => o.includes('자율')) && aopts.some((o) => o.includes('동아리')), 'e2e 자율: 자율·동아리 데이터', aopts)
+const autIdx = await popup.evaluate(() => Array.from(document.querySelectorAll('#fill-payload option')).findIndex((o) => o.textContent.includes('자율')))
+await popup.selectOption('#fill-payload', { index: autIdx })
+ok(await popup.locator('#club-row').isVisible(), 'e2e 자율: 동아리 구간 이어쓰기 선택 보임')
+await popup.check('#fill-club')
+await popup.click('#btn-preview')
+await popup.waitForFunction(() => document.getElementById('log').textContent.includes('입력 방식'), null, { timeout: 30000 })
+eq(await neisPage.evaluate(() => window.__mock.rows('aut')[0].speclActSpablMteCn), '1학기 자율.\n자율 1번 문장임.\n\n(과학부(6-3)) 1학기 동아리.\n동아리 김철수 학생은 성실함.', 'e2e 자율: 구간마다 이어씀')
+eq(await neisPage.evaluate(() => window.__mock.rows('aut')[1].speclActSpablMteCn), '기존 자율\n자율 2번 문장임.', 'e2e 자율: 동아리 문장 없는 학생은 자율 구간만')
+
+// 학생부자료기록: 확인만 / 지원하지 않는 화면 안내
+await neisPage.goto('https://sgb-test.neis.go.kr/edu/mock.do?cpr=1&screen=' + encodeURIComponent('학생부자료기록'))
+await neisPage.waitForLoadState('load')
+await popup.goto(`chrome-extension://${extId}/popup/popup.html?tabId=${tabId}`)
+await popup.waitForFunction(() => document.getElementById('screen-status').textContent.includes('확인만'), null, { timeout: 15000 })
+ok(await popup.locator('#btn-fill').isDisabled(), 'e2e 학생부자료기록: 확인만 · 입력 버튼 꺼짐')
+await neisPage.goto('https://sgb-test.neis.go.kr/edu/mock.do?cpr=1&screen=' + encodeURIComponent('미지원'))
+await neisPage.waitForLoadState('load')
+await popup.goto(`chrome-extension://${extId}/popup/popup.html?tabId=${tabId}`)
+await popup.waitForFunction(() => document.getElementById('screen-status').textContent.includes('지원하지 않는'), null, { timeout: 15000 })
+ok((await popup.locator('#screen-status').innerText()).includes('els_sdlzz99_m00'), 'e2e 미지원: 앱 id와 구조 수집 안내')
+{
+  // content script가 3차 구조 수집 필드를 그대로 넘기는지 (단계 콤보 확인 · 데이터 컨트롤 · 값 분포 · 알려지지 않은 앱)
+  const um = await popup.evaluate((tabId) => chrome.runtime.sendMessage({ type: 'neis-command', tabId, cmd: 'scan' }), tabId)
+  const uk = um.frames[0].scan.known
+  ok(uk.unknownApps.length === 1 && uk.unknownApps[0].inputs.some((x) => x.id === 'txaMemo'), 'e2e 구조 수집: 알려지지 않은 앱 정보 전달', uk.unknownApps)
+  await neisPage.goto('https://sgb-test.neis.go.kr/edu/mock.do?cpr=1&lvl=row&screen=' + encodeURIComponent('교과평가'))
+  await neisPage.waitForLoadState('load')
+  const sm = await popup.evaluate((tabId) => chrome.runtime.sendMessage({ type: 'neis-command', tabId, cmd: 'scan' }), tabId)
+  const kk = sm.frames[0].scan.known
+  ok(kk.levelProbe && kk.levelProbe.rows.length === 2 && kk.levelProbe.restored && kk.levelProbe.itemsAfterSelect.length === 4, 'e2e 구조 수집: 단계 콤보 확인 전달', kk.levelProbe)
+  ok(kk.dataControls[0].list.some((x) => x.id === 'dsEvlCria' && x.rows && x.rows.length === 4) && kk.apps.some((a) => a.distinct && a.distinct.evlLvlCd), 'e2e 구조 수집: 데이터 컨트롤·값 분포 전달')
+  ok(!FAKE.some((f) => JSON.stringify(sm).includes(f)), 'e2e 구조 수집: 개인정보 없음')
+}
 
 // 예전 엔진(0.1.0)이 남은 탭: 인식·구조 수집·입력 모두 engine-outdated
 await neisPage.goto('https://sgb-test.neis.go.kr/edu/mock.do?screen=' + encodeURIComponent('행동특성'))

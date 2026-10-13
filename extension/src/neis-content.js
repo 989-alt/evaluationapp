@@ -7,8 +7,8 @@
   globalThis.__sgbContentLoaded = true
 
   // neis-main.js의 VERSION과 같아야 합니다. 확장을 업데이트한 뒤 새로고침하지 않은 나이스 탭에는 예전 엔진이 남아 있으므로 막습니다
-  const ENGINE_VERSION = '0.2.0'
-  const TIMEOUT = { detect: 10000, scan: 10000, inspect: 15000, fill: 10 * 60 * 1000, stop: 3000, ping: 500 }
+  const ENGINE_VERSION = '0.3.0'
+  const TIMEOUT = { detect: 10000, scan: 15000, inspect: 15000, fill: 10 * 60 * 1000, stop: 3000, ping: 500 }
   const pending = new Map() // nonce -> { resolve, timer, progress }
 
   const newNonce = () => {
@@ -55,6 +55,9 @@
   const numOrNull = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v))
   /** 앱 id (예: edu/sw/els/sdl/ce/els_sdlce04_m00$2) — 경로 모양 글자만 */
   const appIdStr = (v) => (typeof v === 'string' && /^[\w/$.-]{1,100}$/.test(v) ? v : null)
+  const MODES = ['empty', 'overwrite', 'append']
+  const modeStr = (v) => (MODES.includes(v) ? v : null)
+  const boolOrNull = (v) => (typeof v === 'boolean' ? v : null)
   function cleanUnmatched(v) {
     return Array.isArray(v)
       ? v
@@ -89,6 +92,7 @@
       knownApp: d.knownApp === true,
       activeApp: appIdStr(d.activeApp),
       datasetRows: numOrNull(d.datasetRows),
+      mdiSelected: appIdStr(d.mdiSelected),
       warnings: strs(d.warnings, 60, 10),
       rows: num(d.rows),
       cpr: d.cpr === true,
@@ -121,6 +125,14 @@
       screen: short(r.screen, 20),
       strategy: strategy(r.strategy),
       activeApp: appIdStr(r.activeApp),
+      mdiSelected: appIdStr(r.mdiSelected),
+      mode: modeStr(r.mode),
+      joiner: typeof r.joiner === 'string' ? r.joiner.slice(0, 10) : null,
+      modeLabel: short(r.modeLabel, 60),
+      already: num(r.already),
+      levelUnavailable: num(r.levelUnavailable),
+      modifiedBefore: numOrNull(r.modifiedBefore),
+      modifiedRows: numOrNull(r.modifiedRows),
       filled: num(r.filled),
       rows: num(r.rows),
       cells: num(r.cells),
@@ -162,7 +174,47 @@
       strategy: strategy(r.strategy),
       knownApp: r.knownApp === true,
       activeApp: appIdStr(r.activeApp),
+      mdiSelected: appIdStr(r.mdiSelected),
       datasetRows: numOrNull(r.datasetRows),
+      mode: modeStr(r.mode),
+      joiner: typeof r.joiner === 'string' ? r.joiner.slice(0, 10) : null,
+      modeLabel: short(r.modeLabel, 60),
+      modifiedRows: numOrNull(r.modifiedRows),
+      referenceBytes: numOrNull(r.referenceBytes),
+      pairing: Array.isArray(r.pairing)
+        ? r.pairing.slice(0, 16).filter((x) => x && Number.isInteger(x.student)).map((x) => ({
+            student: x.student,
+            code: short(x.code, 40),
+            how: ['code', 'text', 'order'].includes(x.how) ? x.how : null,
+            row: num(x.row),
+            area: short(x.area, 20),
+            dataArea: x.dataArea == null ? null : short(x.dataArea, 20),
+            neisLen: num(x.neisLen),
+            neisText: short(x.neisText, 24),
+          }))
+        : null,
+      pairingHow: r.pairingHow && typeof r.pairingHow === 'object' ? { code: num(r.pairingHow.code), text: num(r.pairingHow.text), order: num(r.pairingHow.order) } : null,
+      levelProbe:
+        r.levelProbe && typeof r.levelProbe === 'object'
+          ? {
+              restored: r.levelProbe.restored === true,
+              rows: Array.isArray(r.levelProbe.rows) ? r.levelProbe.rows.slice(0, 2).map((x) => ({ row: num(x && x.row), how: x && x.how != null ? short(x.how, 10) : null, items: num(x && x.items) })) : [],
+            }
+          : null,
+      lengths: Array.isArray(r.lengths)
+        ? r.lengths.slice(0, 60).filter((x) => x && Number.isInteger(x.student)).map((x) => {
+            const o = { student: x.student, existing: num(x.existing), add: num(x.add), combined: num(x.combined), over: x.over === true }
+            if (x.state === 'already' || x.state === 'skip') o.state = x.state
+            if (Number.isInteger(x.sections)) {
+              o.sections = x.sections
+              o.hasClubSection = x.hasClubSection === true
+              o.autBytes = num(x.autBytes)
+              o.clubBytes = num(x.clubBytes)
+              o.addClub = num(x.addClub)
+            }
+            return o
+          })
+        : null,
       knownApps: Array.isArray(r.knownApps)
         ? r.knownApps.slice(0, 20).map((k) => ({
             id: appIdStr(k && k.id),
@@ -197,6 +249,41 @@
   const scalar = (v, n) => (typeof v === 'number' || typeof v === 'boolean' ? v : v == null ? null : short(v, n))
   const flatObj = (v, n, cap) => (isObj(v) ? Object.fromEntries(Object.entries(v).slice(0, cap).map(([k, x]) => [short(k, 40), scalar(x, n)])) : {})
   const objList = (v, cap, f) => (Array.isArray(v) ? v.slice(0, cap).map((x) => (isObj(x) ? f(x) : null)) : [])
+  const items = (v) => (Array.isArray(v) ? objList(v, 30, (it) => ({ label: short(it.label, 20), value: short(it.value, 40) })) : null)
+  function cleanDistinct(v) {
+    if (!isObj(v)) return {}
+    const out = {}
+    for (const [c, d] of Object.entries(v).slice(0, 20))
+      if (isObj(d)) out[short(c, 40)] = { distinct: num(d.distinct), values: objList(d.values, 30, (x) => ({ value: short(x.value, 40), count: num(x.count) })) }
+    return out
+  }
+  function cleanDataControl(d) {
+    const o = { id: d.id == null ? null : short(d.id, 40), type: d.type == null ? null : short(d.type, 20), columnNames: strs(d.columnNames, 40, 60), rowCount: numOrNull(d.rowCount) }
+    if (d.personal === true) o.personal = true
+    if (d.rowsWithheld === 'name-like') o.rowsWithheld = 'name-like'
+    if (Array.isArray(d.rows)) o.rows = objList(d.rows, 40, (row) => flatObj(row, 60, 30))
+    return o
+  }
+  function cleanProbe(p) {
+    if (!isObj(p)) return null
+    if (p.error) return { error: short(p.error, 40) }
+    return {
+      itemSetConfig: typeof p.itemSetConfig === 'string' ? short(p.itemSetConfig, 80) : flatObj(p.itemSetConfig, 40, 20),
+      itemsAtRest: items(p.itemsAtRest) || [],
+      itemsAfterSelect: items(p.itemsAfterSelect) || [],
+      dataSetAtRest: isObj(p.dataSetAtRest) ? cleanDataControl(p.dataSetAtRest) : null,
+      selectionBefore: numOrNull(p.selectionBefore),
+      editRowBefore: numOrNull(p.editRowBefore),
+      rows: objList(p.rows, 2, (x) => ({
+        row: num(x.row),
+        how: x.how == null ? null : short(x.how, 10),
+        items: items(x.items) || [],
+        detailItems: x.detailItems === 'same' ? 'same' : items(x.detailItems) || [],
+        dataSet: isObj(x.dataSet) ? cleanDataControl(x.dataSet) : null,
+      })),
+      restored: p.restored === true,
+    }
+  }
   function cleanKnown(k) {
     if (!isObj(k)) return null
     if (k.error) return { error: short(k.error, 40) }
@@ -223,6 +310,29 @@
         levelComboItems: Array.isArray(a.levelComboItems) ? objList(a.levelComboItems, 30, (it) => ({ label: short(it.label, 20), value: short(it.value, 40) })) : null,
         datasetSample: objList(a.datasetSample, 3, (row) => flatObj(row, 40, 40)),
         rowStates: Array.isArray(a.rowStates) ? a.rowStates.slice(0, 3).map((x) => scalar(x, 20)) : [],
+        modifiedRows: numOrNull(a.modifiedRows),
+        distinct: cleanDistinct(a.distinct),
+      })),
+      dataControls: objList(k.dataControls, 6, (d) => ({ app: appIdStr(d.app), list: objList(d.list, 40, cleanDataControl) })),
+      levelProbe: cleanProbe(k.levelProbe),
+      unknownApps: objList(k.unknownApps, 6, (u) => ({
+        id: appIdStr(u.id),
+        title: u.title == null ? null : short(u.title, 60),
+        visible: typeof u.visible === 'boolean' ? u.visible : null,
+        via: u.via == null ? null : short(u.via, 40),
+        error: u.error == null ? undefined : short(u.error, 40),
+        grids: objList(u.grids, 6, (g) => ({
+          id: short(g.id, 40),
+          rowCount: numOrNull(g.rowCount),
+          columnNames: strs(g.columnNames, 40, 80),
+          headerCols: objList(g.headerCols, 60, (c) => flatObj(c, 40, 4)),
+          detailCols: objList(g.detailCols, 60, (c) => flatObj(c, 40, 3)),
+          distinct: cleanDistinct(g.distinct),
+          modifiedRows: numOrNull(g.modifiedRows),
+        })),
+        buttons: strs(u.buttons, 40, 60),
+        inputs: objList(u.inputs, 80, (x) => flatObj(x, 40, 3)),
+        dataControls: objList(u.dataControls, 40, cleanDataControl),
       })),
       api,
     }

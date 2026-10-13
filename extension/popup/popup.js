@@ -8,7 +8,8 @@ const SCREEN_LABEL = {
   교과평가: '교과평가',
   학기말종합의견: '학기말종합의견',
   행동특성: '행동특성 및 종합의견',
-  학생부자료기록: '학생부자료기록 (창체)',
+  학생부자료기록: '학생부자료기록 (확인만)',
+  자율활동관리: '자율활동관리 (자율·자치활동)',
   동아리활동관리: '동아리활동관리',
   진로활동관리: '진로활동관리',
 }
@@ -17,6 +18,7 @@ const SCREEN_SLUG = {
   학기말종합의견: 'semester-opinion',
   행동특성: 'behavior',
   학생부자료기록: 'creative-record',
+  자율활동관리: 'autonomy',
   동아리활동관리: 'club',
   진로활동관리: 'career',
 }
@@ -36,6 +38,10 @@ const ERR = {
   closed: '마감된 학생이 있어 입력하지 않았습니다. 나이스에서 마감 여부를 확인하세요.',
   'screen-mismatch': '화면 지정이 실제 화면과 다릅니다. "화면 지정"을 "자동 인식"으로 두거나 나이스에서 그 화면 탭을 연 뒤 다시 실행하세요.',
   'active-app-ambiguous': '보이는 나이스 화면을 하나로 정하지 못해 입력하지 않았습니다. 쓰지 않는 탭을 닫고 "화면 다시 인식"을 누르세요.',
+  'unsupported-screen': '아직 지원하지 않는 나이스 화면입니다. "화면 구조 수집"으로 파일을 내려받아 보내 주세요.',
+  'not-a-target': '학생부자료기록은 자율활동관리·동아리활동관리·진로활동관리에서 쓴 내용이 합쳐지는 화면이라 자동 입력 대상이 아닙니다.',
+  'area-mismatch': '고른 창체 데이터가 이 화면의 영역과 다릅니다. 자율 → 자율활동관리, 동아리 → 동아리활동관리, 진로 → 진로활동관리에 넣으세요.',
+  'club-append-only': '동아리 문장은 이어쓰기로만 자율활동관리 칸(동아리 구간)에 넣습니다. 입력 방식을 이어쓰기로 바꾸세요.',
 }
 /** 화면 인식·인식 검사 경고 */
 const WARN = {
@@ -47,6 +53,12 @@ const WARN = {
   'subject-mismatch': ERR['subject-mismatch'],
   'level-code-unknown': ERR['level-code-unknown'],
   closed: ERR.closed,
+  'unsupported-screen': ERR['unsupported-screen'],
+  'not-a-target': ERR['not-a-target'],
+  'area-mismatch': ERR['area-mismatch'],
+  'club-append-only': ERR['club-append-only'],
+  'over-reference-bytes': '참고용 바이트를 넘는 학생이 있습니다 (막지 않음). 나이스에서 글자수를 확인하세요.',
+  'target-not-empty': '칸에 이미 글이 있는 학생이 있습니다. 2학기 글을 뒤에 붙이려면 이어쓰기를 고르세요.',
 }
 const STRATEGY_LABEL = { 'cpr-known': '나이스 데이터', cpr: 'cpr', dom: '화면(DOM)' }
 /** 앱 id의 마지막 이름 (edu/sw/els/sdl/ce/els_sdlce04_m00$2 → els_sdlce04_m00) */
@@ -260,6 +272,9 @@ function renderScreen() {
   name.classList.toggle('ok', s && s !== 'unknown')
   if (detected.forced) name.textContent += ' (지정)'
   if (detected.running) status.textContent = '입력이 진행 중입니다.'
+  else if (detected.blocked === 'unsupported-screen')
+    status.textContent = `아직 지원하지 않는 화면입니다${detected.mdiSelected ? ' (앱 ' + shortApp(detected.mdiSelected) + ')' : ''}. "화면 구조 수집"으로 파일을 내려받아 보내 주세요.`
+  else if (s === '학생부자료기록') status.textContent = '학생부자료기록은 확인만 하는 화면입니다 (자동 입력 대상 아님). 자율·동아리·진로는 각 관리 화면에서 입력하세요.'
   else if (detected.ready) status.textContent = `입력할 표를 찾았습니다 · ${detected.rows}행`
   else if (s && s !== 'unknown') status.textContent = '입력할 표가 없습니다. 나이스에서 조회를 누른 뒤 "화면 다시 인식"을 누르세요.'
   else status.textContent = '이 화면을 알아보지 못했습니다. 아래 "화면 지정"에서 고르거나 화면 구조를 수집해 보내 주세요.'
@@ -295,8 +310,8 @@ $('screen-override').addEventListener('change', runDetect)
 
 $('btn-scan').addEventListener('click', async () => {
   $('btn-scan').disabled = true
-  setMsg('screen-msg', '화면 구조를 수집하는 중…')
-  const r = await neis('scan', null, 20000)
+  setMsg('screen-msg', '화면 구조를 수집하는 중… (교과평가 화면이면 단계 항목을 보려고 행을 잠깐 골랐다가 되돌립니다. 칸은 바꾸지 않습니다)')
+  const r = await neis('scan', null, 25000)
   $('btn-scan').disabled = false
   if (r.error) return setErr('screen-msg', r.error)
   const json = JSON.stringify(r, null, 1)
@@ -337,8 +352,9 @@ function payloadsFor(screen) {
       return idx.filter(([p]) => p.kind === 'subject')
     case '행동특성':
       return idx.filter(([p]) => p.kind === 'behavior')
-    case '학생부자료기록':
-      return idx.filter(([p]) => p.kind === 'creative' && p.subject !== '동아리')
+    case '자율활동관리':
+      // 자율 데이터 (동아리 데이터만 골라 칸의 동아리 구간에 이어쓸 수도 있음)
+      return idx.filter(([p]) => p.kind === 'creative' && (p.subject === '자율' || p.subject === '동아리'))
     case '동아리활동관리':
       return idx.filter(([p]) => p.kind === 'creative' && p.subject === '동아리')
     case '진로활동관리':
@@ -350,13 +366,45 @@ function payloadsFor(screen) {
 
 let lastPayloadChoice = null
 const HINT = {
-  교과평가: '성취기준 코드로 행을 찾아 단계(콤보)와 평가결과를 넣습니다. 끝나면 저장 → 학기말종합의견 화면으로 가세요.',
+  교과평가: '성취기준(코드, 없으면 순서·영역)으로 행을 찾고, 행마다 골라 단계 코드를 읽어 단계와 평가결과를 넣습니다. 먼저 인식 검사로 짝을 확인하세요. 끝나면 저장 → 학기말종합의견 화면으로 가세요.',
   학기말종합의견: '교과를 고른 뒤 번호순으로 학기말 종합의견 칸에 넣습니다.',
   행동특성: '번호순으로 행동특성 및 종합의견 칸에 넣습니다.',
-  학생부자료기록: '영역 구분이 맞는 행(자율·자치활동 또는 진로활동)의 특기사항에 넣습니다. 진로는 "동아리특기사항가져오기" 다음에 하세요.',
+  학생부자료기록: '학생부자료기록은 자율·동아리·진로 화면의 글이 합쳐지는 화면이라 확인만 합니다. 각 관리 화면에서 입력하세요.',
+  자율활동관리:
+    '번호순으로 특기사항에 넣습니다. 칸에 1학기 글(자율 구간 + 빈 줄 + "(부서명(학년-반)) …" 동아리 구간)이 있으면 이어쓰기로 각 구간 끝에 붙입니다.',
   동아리활동관리:
     '부서를 고르고 조회한 뒤 번호순으로 특기사항을 넣습니다. 번호는 담임 반의 출석번호입니다. 여러 반이 섞인 명단이면 입력하지 않으니 반을 하나만 조회하세요.',
   진로활동관리: '번호순으로 특기사항을 넣습니다.',
+}
+/** 이어쓰기를 쓰는 화면 (교과평가는 코드, 학기말종합의견은 학기마다 따로 씀) */
+const APPEND_SCREENS = ['행동특성', '자율활동관리', '동아리활동관리', '진로활동관리']
+const JOINERS = { none: '', space: ' ', nl1: '\n', nl2: '\n\n' }
+const JOINER_LABEL = { none: '바로 이어서', space: '띄어쓰기 한 칸', nl1: '줄바꿈 한 번', nl2: '줄바꿈 두 번', custom: '직접 입력' }
+const MODE_LABEL = { empty: '빈 칸만', overwrite: '덮어쓰기', append: '이어쓰기' }
+function currentMode() {
+  const m = document.querySelector('input[name=mode]:checked')
+  return m ? m.value : 'empty'
+}
+function currentJoiner() {
+  const k = $('fill-joiner').value
+  if (k === 'custom') return $('joiner-custom').value.replace(/\r\n?/g, '\n').slice(0, 10)
+  return JOINERS[k] ?? ' '
+}
+// 입력 방식·이음 기억 (chrome.storage.local 'fillPrefs')
+async function loadPrefs() {
+  try {
+    const { fillPrefs } = await chrome.storage.local.get('fillPrefs')
+    if (!fillPrefs || typeof fillPrefs !== 'object') return
+    const r = document.querySelector(`input[name=mode][value="${['empty', 'overwrite', 'append'].includes(fillPrefs.mode) ? fillPrefs.mode : 'empty'}"]`)
+    if (r) r.checked = true
+    if (fillPrefs.joiner in JOINER_LABEL) $('fill-joiner').value = fillPrefs.joiner
+    if (typeof fillPrefs.custom === 'string') $('joiner-custom').value = fillPrefs.custom.slice(0, 10)
+  } catch {
+    // 기본값
+  }
+}
+function savePrefs() {
+  chrome.storage.local.set({ fillPrefs: { mode: currentMode(), joiner: $('fill-joiner').value, custom: $('joiner-custom').value.slice(0, 10) } }).catch(() => {})
 }
 
 function renderFill() {
@@ -366,9 +414,9 @@ function renderFill() {
   sel.textContent = ''
   const list = screen ? payloadsFor(screen) : []
   // 교과·창체는 고르게 합니다 (다른 과목/영역이 들어가 저장되는 것을 막기 위해)
-  const mustChoose = ['교과평가', '학기말종합의견', '학생부자료기록'].includes(screen)
+  const mustChoose = ['교과평가', '학기말종합의견', '자율활동관리'].includes(screen)
   if (mustChoose && list.length) {
-    const o = el('option', null, screen === '학생부자료기록' ? '데이터를 고르세요' : '과목을 고르세요')
+    const o = el('option', null, screen === '자율활동관리' ? '데이터를 고르세요' : '과목을 고르세요')
     o.value = ''
     sel.append(o)
   }
@@ -379,17 +427,21 @@ function renderFill() {
   }
   if (list.some(([, i]) => String(i) === prev)) sel.value = prev
   else sel.value = mustChoose ? '' : sel.options[0] ? sel.options[0].value : ''
-  $('area-row').hidden = screen !== '학생부자료기록'
-  if (screen === '학생부자료기록' && sel.value !== lastPayloadChoice) {
-    // 데이터를 새로 고르면 영역을 데이터의 영역(자율/진로)으로 맞춥니다. 기타는 직접 고르게 합니다
-    const p = sel.value === '' ? null : state.payloads[Number(sel.value)]
-    $('fill-area').value = p && (p.subject === '자율' || p.subject === '진로') ? p.subject : ''
-  }
+  // 자율활동관리: 자율 데이터를 골랐고 동아리 데이터가 있으면 "동아리 구간에도 이어쓰기"를 고를 수 있음
+  const chosenP = sel.value === '' ? null : state.payloads[Number(sel.value)]
+  const club = clubPayload()
+  $('club-row').hidden = !(screen === '자율활동관리' && chosenP && chosenP.subject === '자율' && club)
+  // 이어쓰기는 행발·자율·동아리·진로 화면만 (교과평가·학기말종합의견에서는 숨기고 빈 칸만으로)
+  const canAppend = !screen || APPEND_SCREENS.includes(screen)
+  $('mode-append-item').hidden = !canAppend
+  if (!canAppend && currentMode() === 'append') document.querySelector('input[name=mode][value=empty]').checked = true
+  $('joiner-row').hidden = currentMode() !== 'append'
+  $('joiner-custom-row').hidden = $('fill-joiner').value !== 'custom'
   lastPayloadChoice = sel.value
   let hint = screen ? HINT[screen] || '' : '먼저 나이스 화면을 인식하세요.'
-  if (screen && !list.length) hint = '이 화면에 맞는 데이터가 없습니다. 웹앱에서 "나이스로 보내기"를 누른 뒤 "다시 가져오기"를 누르세요.'
+  if (screen && screen !== '학생부자료기록' && !list.length) hint = '이 화면에 맞는 데이터가 없습니다. 웹앱에서 "나이스로 보내기"를 누른 뒤 "다시 가져오기"를 누르세요.'
   $('fill-hint').textContent = hint
-  const chosen = sel.value !== '' && (screen !== '학생부자료기록' || $('fill-area').value !== '')
+  const chosen = sel.value !== ''
   const can = !running && !!screen && list.length > 0 && chosen && (tabKind === 'neis' || tabKind === 'gokr-ok') && !(detected && detected.error)
   $('btn-fill').disabled = !can || inspecting
   $('btn-preview').disabled = !can || inspecting
@@ -398,7 +450,27 @@ function renderFill() {
 }
 
 $('fill-payload').addEventListener('change', renderFill)
-$('fill-area').addEventListener('change', renderFill)
+$('fill-club').addEventListener('change', renderFill)
+for (const r of document.querySelectorAll('input[name=mode]'))
+  r.addEventListener('change', () => {
+    savePrefs()
+    renderFill()
+  })
+$('fill-joiner').addEventListener('change', () => {
+  savePrefs()
+  renderFill()
+})
+$('joiner-custom').addEventListener('input', savePrefs)
+/** 가장 최근 동아리 데이터 (자율활동관리 칸의 동아리 구간용) */
+function clubPayload() {
+  const ps = (state.payloads || []).filter((p) => p.kind === 'creative' && p.subject === '동아리')
+  return ps.length ? ps.reduce((a, b) => ((b.createdAt || 0) >= (a.createdAt || 0) ? b : a)) : null
+}
+function modeSummary(mode, joiner) {
+  if (mode !== 'append') return `입력 방식: ${MODE_LABEL[mode] || '빈 칸만'}`
+  const key = Object.keys(JOINERS).find((k) => JOINERS[k] === joiner)
+  return `입력 방식: 이어쓰기 · ${key ? JOINER_LABEL[key] : '직접 입력 "' + String(joiner ?? '').replace(/\n/g, '↵') + '"'}`
+}
 
 function showProgress(p) {
   $('progress').hidden = false
@@ -421,6 +493,8 @@ function showResult(r) {
     return
   }
   log.append(el('p', 'ok', `${r.filled}명 입력 · 칸 ${r.cells ?? 0}개 · ${STRATEGY_LABEL[r.strategy] || '화면(DOM)'} 방식`))
+  if (r.mode) log.append(el('p', 'muted', modeSummary(r.mode, r.joiner)))
+  if (r.modifiedRows != null && r.cells) log.append(el('p', 'muted', `나이스 데이터에서 바뀐 행: ${r.modifiedRows}행`))
   log.append(el('p', null, r.saved ? `저장을 눌렀습니다${r.confirmed ? ' · 확인 ' + r.confirmed + '번' : ''}` : '저장은 누르지 않았습니다'))
   const missing = arr(r.missing)
   const ambiguous = arr(r.ambiguous)
@@ -450,7 +524,8 @@ function showInspect(r) {
   if (r.error) {
     log.append(putErr(el('p', 'bad'), r.error))
   } else {
-    if (r.knownApp) log.append(el('p', null, `앱 ${shortApp(r.activeApp)} · 데이터 ${r.datasetRows ?? 0}행`))
+    if (r.knownApp) log.append(el('p', null, `앱 ${shortApp(r.activeApp)} · 데이터 ${r.datasetRows ?? 0}행${r.modifiedRows != null ? ' · 바뀐 행 ' + r.modifiedRows : ''}`))
+    if (r.mode) log.append(el('p', 'muted', modeSummary(r.mode, r.joiner)))
     log.append(el('p', null, `찾은 학생 ${r.studentsFound}명 · 넣을 칸 ${r.cells}개`))
     const missing = arr(r.studentsMissing)
     if (missing.length) log.append(el('p', 'bad', `못 찾은 번호: ${missing.join(', ')}`))
@@ -463,6 +538,16 @@ function showInspect(r) {
         log.append(el('p', null, `학생별 성취기준 ${min === max ? min : min + '~' + max}개`))
       }
       showUnmatched(log, r.unmatchedStandards)
+      const how = r.pairingHow || {}
+      if (how.order || how.text) log.append(el('p', how.order ? 'bad' : null, `성취기준 짝짓기: 코드 ${how.code || 0} · 본문 ${how.text || 0} · 순서 ${how.order || 0}${how.order ? ' — 아래 짝이 맞는지 꼭 확인하세요' : ''}`))
+      for (const x of arr(r.pairing)) {
+        const howL = { code: '코드', text: '본문', order: '순서' }[x.how] || '?'
+        log.append(el('p', 'muted small', `${x.student}번 · ${x.code} ↔ 나이스 ${x.row + 1}행 [${x.area || '-'}${x.dataArea ? ' / 데이터 ' + x.dataArea : ''}] "${x.neisText}${x.neisLen > 24 ? '…' : ''}" (${x.neisLen}자, ${howL})`))
+      }
+      if (r.levelProbe) {
+        const lp = r.levelProbe
+        log.append(el('p', 'muted', `단계 항목 확인: 행을 골라 읽음 (${arr(lp.rows).map((x) => `${x.row + 1}행 ${x.items}개`).join(', ') || '없음'}) · 원래 선택으로 ${lp.restored ? '되돌림' : '되돌리지 못함'}`))
+      }
       const codes = r.levelCodes && Object.keys(r.levelCodes).length ? r.levelCodes : null
       log.append(el('p', codes ? null : 'bad', codes ? `단계 코드: ${Object.entries(codes).map(([k, v]) => `${k}=${v}`).join(', ')}` : '단계 코드를 읽지 못했습니다 (단계는 입력하지 않습니다)'))
       const af = r.resultAutoFill === true ? '예 (단계를 고르면 나이스가 채우는 것으로 보임)' : r.resultAutoFill === false ? '아니오' : '알 수 없음'
@@ -470,6 +555,16 @@ function showInspect(r) {
       const side = r.levelSideColumns
       if (side && side.rows)
         log.append(el('p', 'muted', `단계가 있는 ${side.rows}행 중 단계 이름 ${side.evlCtrNm ?? '-'} · 성취수준 코드 ${side.evlLvlCd ?? '-'} · 성취수준 이름 ${side.evlLvlNm ?? '-'}행이 차 있음`))
+    }
+    const lens = arr(r.lengths)
+    if (lens.length) {
+      const ref = r.referenceBytes
+      log.append(el('p', null, `글 길이 (바이트, 한글 3)${ref ? ' · 참고용 ' + ref + 'B' : ''}`))
+      for (const x of lens) {
+        const sec = x.sections != null ? ` · 구간 ${x.sections}${x.hasClubSection ? '(동아리 있음)' : ''} 자율 ${x.autBytes}+${x.add}${x.addClub ? ' · 동아리 ' + x.clubBytes + '+' + x.addClub : ''}` : ` · 기존 ${x.existing} + 새 ${x.add}`
+        const st = x.state === 'already' ? ' · 이미 이어져 있음' : x.state === 'skip' ? ' · 건너뜀' : ''
+        log.append(el('p', x.over ? 'bad small' : 'muted small', `${x.student}번${sec} → ${x.combined}B${x.over ? ' (참고 초과)' : ''}${st}`))
+      }
     }
   }
   for (const w of arr(r.warnings)) if (WARN[w]) log.append(el('p', 'bad', WARN[w]))
@@ -479,15 +574,21 @@ function showInspect(r) {
 
 let preflightArmed = null // 사전 검사 오류가 있을 때 한 번 더 눌러야 시작 (삭제와 같은 방식)
 function buildJob(screen, p, save) {
-  return {
+  const mode = currentMode()
+  const job = {
     screen,
-    area: screen === '학생부자료기록' ? $('fill-area').value : undefined,
     subject: p.kind === 'subject' ? p.subject : undefined,
-    mode: document.querySelector('input[name=mode]:checked').value,
+    creative: p.kind === 'creative' ? p.subject : undefined,
+    mode,
+    joiner: mode === 'append' ? currentJoiner() : undefined,
     save: !!save,
     delayMs: 400,
     rows: p.rows.map((r) => ({ student: r.student, text: r.text, standards: r.standards })),
   }
+  // 자율활동관리: 동아리 문장도 같은 칸의 동아리 구간에
+  const club = clubPayload()
+  if (screen === '자율활동관리' && p.subject === '자율' && club && $('fill-club').checked) job.clubRows = club.rows.map((r) => ({ student: r.student, text: r.text }))
+  return job
 }
 
 async function startInspect() {
@@ -581,6 +682,7 @@ function classifyTab(t) {
 
 async function init() {
   $('ver').textContent = 'v' + chrome.runtime.getManifest().version + ' · 서버와 통신하지 않습니다'
+  await loadPrefs()
   await loadState()
   // 테스트용: popup.html?tabId=N 으로 대상 탭을 지정
   const forced = Number(qs.get('tabId'))

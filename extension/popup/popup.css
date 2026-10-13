@@ -93,3 +93,7 @@ h2 { margin: 0 0 8px; font-size: 16px; font-weight: 700; }
 .msg.err { color: var(--lv3-ink); }
 p { margin: 6px 0 0; }
 [hidden] { display: none !important; }
+/* 입력 방식 세 개 (이어쓰기 추가): 좁으면 줄을 바꿈 */
+.seg { flex-wrap: wrap; border-radius: 14px; }
+.seg-item span { padding: 5px 10px; }
+textarea.field { resize: vertical; min-height: 34px; font: inherit; }
