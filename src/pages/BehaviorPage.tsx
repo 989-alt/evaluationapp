@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Alert, Card, CopyText, PageHeader, Progress, Spinner, toast } from '@/components/ui'
+import { Alert, Card, CopyText, IssueList, PageHeader, Progress, Spinner, Stat, toast } from '@/components/ui'
 import { useClient, useStore } from '@/store'
-import { generateJSON } from '@/llm/provider'
+import { asArray, generateJSON } from '@/llm/provider'
 import { behaviorPrompt, SYSTEM_TEACHER } from '@/llm/prompts'
 import { downloadXlsx } from '@/lib/excel'
 import { hasErrors, validateComment, type Issue } from '@/lib/validate'
-import { neisBytes } from '@/lib/text'
+import { BEHAVIOR_EXTRA_BYTES } from '@/lib/neis'
+import { flatten, hash, neisBytes, sleep } from '@/lib/text'
 import type { BehaviorResult, BehaviorStudent, NeisPayload } from '@/lib/types'
 
 const CATEGORIES: Array<{ key: string; label: string; traits: string[] }> = [
@@ -15,56 +16,15 @@ const CATEGORIES: Array<{ key: string; label: string; traits: string[] }> = [
   { key: 'arts', label: '예체능', traits: ['음악', '미술', '체육'] },
 ]
 const BATCH = 5
-const MAX_EXTRA = 150
+const MAX_EXTRA = BEHAVIOR_EXTRA_BYTES
 
-function hash(t: string) {
-  let h = 5381
-  for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0
-  return (h >>> 0).toString(36)
-}
-const flatten = (t: string) => t.replace(/\s*\n+\s*/g, ' ').replace(/\s{2,}/g, ' ').trim()
 const shortName = (t: string) => t.replace(/^학습\((.+)\)$/, '$1')
+/** 프롬프트에 보낼 특성 이름: "학습(우수)" → "학습 우수" (괄호가 문장에 옮겨지지 않도록) */
+const promptName = (t: string) => t.replace(/^학습\((.+)\)$/, '학습 $1')
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 
-function sleep(ms: number, signal: AbortSignal) {
-  return new Promise<void>((resolve) => {
-    if (signal.aborted) return resolve()
-    const done = () => {
-      clearTimeout(t)
-      signal.removeEventListener('abort', done)
-      resolve()
-    }
-    const t = setTimeout(done, ms)
-    signal.addEventListener('abort', done)
-  })
-}
-
-function IssueList({ issues }: { issues: Issue[] }) {
-  if (!issues.length) return <span className="font-bold text-lv0-ink">검사 통과</span>
-  return (
-    <>
-      {issues.map((it, i) => (
-        <span key={i} className={`font-bold ${it.level === 'error' ? 'text-lv3-ink' : 'text-lv2-ink'}`}>{it.message}</span>
-      ))}
-    </>
-  )
-}
-
-function Stat({ label, value, of, cls = '' }: { label: string; value: number; of?: number; cls?: string }) {
-  return (
-    <div className="flex flex-col min-w-[64px]">
-      <div className={`text-[30px] font-light leading-none tracking-[-0.02em] ${cls}`}>
-        {value}
-        {of !== undefined && <span className="text-[16px] text-muted-2"> / {of}</span>}
-      </div>
-      <div className="text-[12px] text-muted mt-1.5">{label}</div>
-    </div>
-  )
-}
-
 function parseBatch(out: unknown): Array<{ id: number; text: string }> {
-  const raw: any = out
-  const list: any[] = Array.isArray(raw) ? raw : Array.isArray(raw?.results) ? raw.results : raw && typeof raw === 'object' && 'id' in raw ? [raw] : []
+  const list = asArray(out)
   const res: Array<{ id: number; text: string }> = []
   for (const x of list) {
     const id = parseInt(String(x?.id ?? x?.student ?? '').replace(/\D/g, ''), 10)
@@ -100,7 +60,14 @@ export default function BehaviorPage() {
   const abortRef = useRef<AbortController | null>(null)
   const resultsRef = useRef<HTMLDivElement | null>(null)
 
-  useEffect(() => () => abortRef.current?.abort(), [])
+  useEffect(
+    () => () => {
+      if (!abortRef.current) return
+      abortRef.current.abort()
+      toast('다른 화면으로 이동해 행발 생성을 중지했습니다')
+    },
+    [],
+  )
   useEffect(() => setCountDraft(String(students.length)), [students.length])
   useEffect(() => setBytesDraft(String(target)), [target])
 
@@ -173,7 +140,7 @@ export default function BehaviorPage() {
   }
 
   const traitsOf = (s: BehaviorStudent) =>
-    Object.entries(s.checks).map(([name, st]) => ({ name, status: st === 1 ? '긍정' : '지도필요' }))
+    Object.entries(s.checks).map(([name, st]) => ({ name: promptName(name), status: st === 1 ? '긍정' : '지도필요' }))
 
   // ---------- 생성 ----------
   const start = (targets: BehaviorStudent[]) => {

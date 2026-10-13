@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, PageHeader } from '@/components/ui'
 
@@ -77,23 +77,22 @@ function Schematic({ step }: { step: number }) {
   )
 }
 
-/** public/guide/step{n}.png 가 있으면 사진을, 없으면 도식을 보여줍니다 */
+// src/assets/guide/step{n}.png 를 넣으면 빌드에 포함됩니다. 없는 파일은 요청하지 않으므로 404가 나지 않습니다.
+const SHOTS = import.meta.glob('/src/assets/guide/step*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>
+const shotUrl = (n: number): string | undefined => SHOTS[`/src/assets/guide/step${n}.png`]
+
+/** 스크린샷이 있으면 사진을, 없으면 도식을 보여줍니다 */
 function Shot({ step }: { step: number }) {
-  const [failed, setFailed] = useState(false)
+  const url = shotUrl(step)
   return (
     <figure className="m-0">
-      {failed ? (
+      {url ? (
+        <img src={url} alt={`단계 ${step} 화면`} className="w-full rounded-[14px] border border-line" />
+      ) : (
         <>
           <Schematic step={step} />
           <figcaption className="mt-2 text-[12px] text-muted">실제 화면 스크린샷이 들어갈 자리</figcaption>
         </>
-      ) : (
-        <img
-          src={`${import.meta.env.BASE_URL}guide/step${step}.png`}
-          alt={`단계 ${step} 화면`}
-          className="w-full rounded-[14px] border border-line"
-          onError={() => setFailed(true)}
-        />
       )}
     </figure>
   )
@@ -104,7 +103,7 @@ const SECTIONS = [
     id: 's0', short: '설정', title: '설정', to: '/settings',
     steps: [
       '설정에서 AI 제공자의 API 키를 붙여 넣고 "모델 불러오기"를 누릅니다. 키는 이 브라우저에만 저장됩니다',
-      '목록에서 모델을 고릅니다. 처음이라면 "추천" 표시가 있는 모델이 무난합니다',
+      '목록에서 모델을 고릅니다. 처음이라면 "권장" 표시가 있는 모델이 무난합니다',
       '문장 종결("함" / "하였음")과 행동특성 목표 바이트를 정합니다',
     ],
   },
@@ -172,8 +171,7 @@ export default function GuidePage() {
       </nav>
 
       {SECTIONS.map((s, i) => (
-        <Card key={s.id} className="p-6 scroll-mt-4">
-          <div id={s.id} className="scroll-mt-6" />
+        <Card key={s.id} id={s.id} className="p-6 scroll-mt-4">
           <div className="eyebrow mb-1">STEP {i}</div>
           <h2 className="m-0 mb-5 text-[22px] font-light tracking-[-0.01em]">{s.title}</h2>
           <div className="grid gap-6 md:grid-cols-2 items-start">
@@ -198,7 +196,7 @@ export default function GuidePage() {
         <h2 className="m-0 mb-4 text-[22px] font-light tracking-[-0.01em]">자주 묻는 질문</h2>
         <div className="flex flex-col gap-2">
           {FAQ.map((f) => (
-            <details key={f.q} className="rounded-[14px] bg-surface-2 px-5 py-3 group">
+            <details key={f.q} className="rounded-[14px] bg-surface-2 px-5 py-3">
               <summary className="cursor-pointer font-bold">{f.q}</summary>
               <p className="m-0 mt-2 text-ink-2 leading-[1.7]">{f.a}</p>
             </details>

@@ -58,3 +58,47 @@ export function subjectsOf(plan: EvalPlan): string[] {
 export function emptyStandard(subject: string): Standard {
   return { id: uid(), subject, code: '', text: '', criteria: ['', '', '', ''] }
 }
+
+const isObj = (x: unknown): x is Record<string, any> => !!x && typeof x === 'object' && !Array.isArray(x)
+const four = (c: unknown): Standard['criteria'] => {
+  const a = Array.isArray(c) ? c.map((x) => String(x ?? '')) : []
+  while (a.length < 4) a.push('')
+  return [a[0], a[1], a[2], a[3]]
+}
+
+/**
+ * 저장되었거나 불러온 평가계획의 빠진 필드를 채웁니다(id는 유지).
+ * creative·criteria·text가 없는 계획이 화면을 깨뜨리지 않게 합니다.
+ */
+export function repairPlan(p: any): EvalPlan {
+  const src = isObj(p) ? p : {}
+  return {
+    ...src,
+    id: String(src.id || uid()),
+    title: String(src.title ?? ''),
+    school: src.school == null ? undefined : String(src.school),
+    grade: src.grade == null ? undefined : String(src.grade),
+    semester: src.semester == null ? undefined : String(src.semester),
+    createdAt: Number(src.createdAt) || Date.now(),
+    standards: (Array.isArray(src.standards) ? src.standards : []).filter(isObj).map((s: Record<string, any>) => ({
+      ...s,
+      id: String(s.id || uid()),
+      subject: String(s.subject || '기타'),
+      code: String(s.code ?? ''),
+      text: String(s.text ?? ''),
+      criteria: four(s.criteria),
+    })),
+    creative: (Array.isArray(src.creative) ? src.creative : []).filter(isObj).map((c: Record<string, any>) => ({
+      ...c,
+      area: String(c.area ?? ''),
+      elements: Array.isArray(c.elements) ? c.elements.map((x: unknown) => String(x ?? '')) : undefined,
+    })),
+    warnings: Array.isArray(src.warnings) ? src.warnings.map((w: unknown) => String(w ?? '')) : [],
+  }
+}
+
+/** JSON으로 불러온 평가계획. 성취기준 id는 유지(성적·결과 연결)하고 계획 id는 항상 새로 만듭니다 */
+export function sanitizePlan(p: any, fileName: string): EvalPlan {
+  const r = repairPlan(p)
+  return { ...r, id: uid(), title: r.title || fileName.replace(/\.json$/i, ''), createdAt: Date.now() }
+}

@@ -73,6 +73,7 @@ export default function GradesPage() {
   const setStudentCount = useStore((s) => s.setStudentCount)
   const setGrade = useStore((s) => s.setGrade)
   const setGradesBulk = useStore((s) => s.setGradesBulk)
+  const clearGrades = useStore((s) => s.clearGrades)
 
   const [view, setView] = useState<View>('student')
   const [activeStudent, setActiveStudent] = useState(1)
@@ -107,7 +108,9 @@ export default function GradesPage() {
     return !r || !!r.error
   })
   const canResume = remaining.length > 0 && entered.some((n) => results.some((r) => r.student === n))
-  const failed = results.filter((r) => r.error && r.student <= N).length
+  const failed = entered.filter((n) => results.find((r) => r.student === n)?.error).length
+  // 이어서 생성은 처음 실행한 문장 수를 따릅니다
+  const runSentences = results.find((r) => !r.error && r.sentences && entered.includes(r.student))?.sentences
   const liveChecked = [...checked].filter((n) => n <= N)
 
   // 학생 수가 줄면 선택 목록에서 범위 밖 번호 제거
@@ -247,7 +250,7 @@ export default function GradesPage() {
   }
 
   // ---------- 생성 ----------
-  const start = (list: number[], confirmOverwrite = true) => {
+  const start = (list: number[], confirmOverwrite = true, sentences: 1 | 2 = two ? 2 : 1) => {
     if (!plan) return
     if (!client) return setError('설정에서 API 키와 모델을 먼저 선택하세요.')
     if (gen.running) return setError('이미 생성 중입니다.')
@@ -258,7 +261,7 @@ export default function GradesPage() {
     if (confirmOverwrite && overwrite && !confirm(`이미 생성된 ${overwrite}명의 평어를 새로 생성한 평어로 바꿉니다. 계속할까요?`)) return
     setError('')
     generateStudents({
-      client, plan, grades: st.grades, students: targets, sentences: two ? 2 : 1, ending: settings.ending, existing: st.results,
+      client, plan, grades: st.grades, students: targets, sentences, ending: settings.ending, existing: st.results,
     }).catch((e: unknown) => toast(e instanceof Error ? e.message : String(e)))
     navigate('/results')
   }
@@ -308,6 +311,14 @@ export default function GradesPage() {
         <div className="flex gap-2">
           <button type="button" className="btn btn-sm" onClick={downloadTemplate} title="현재 입력값이 담긴 성적표 양식을 내려받습니다">양식 받기</button>
           <button type="button" className="btn btn-sm" onClick={() => fileRef.current?.click()}>Excel 성적표로 채우기</button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={gen.running || !Object.values(grades).some((row) => Object.keys(row ?? {}).length)}
+            onClick={() => { if (confirm('입력한 성적(모든 학생의 성취 수준)을 모두 지울까요? 생성된 평어는 그대로 남습니다.')) { clearGrades(); toast('성적을 모두 지웠습니다') } }}
+          >
+            성적 모두 지우기
+          </button>
           <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void onExcel(f); e.target.value = '' }} />
         </div>
       </Card>
@@ -510,8 +521,8 @@ export default function GradesPage() {
               </button>
             )}
             {canResume && (
-              <button type="button" className="btn !bg-transparent !text-white !border-white/30 hover:!border-white" onClick={() => start(remaining, false)} title={failed ? `오류 ${failed}명 포함` : undefined}>
-                이어서 생성 (남은 {remaining.length}명)
+              <button type="button" className="btn !bg-transparent !text-white !border-white/30 hover:!border-white" onClick={() => start(remaining, false, runSentences ?? (two ? 2 : 1))} title={failed ? `오류 ${failed}명 포함` : undefined}>
+                이어서 생성 (남은 {remaining.length}명{runSentences ? ` · ${runSentences}문장` : ''})
               </button>
             )}
             <button type="button" className="btn-accent" disabled={!entered.length} onClick={() => start(entered)}>입력된 {entered.length}명 평어 생성</button>

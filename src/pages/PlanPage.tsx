@@ -5,8 +5,8 @@ import { useActivePlan, useClient, useStore } from '@/store'
 import { generateJSON, PROVIDER_PDF } from '@/llm/provider'
 import { PLAN_EXTRACT_PROMPT, SYSTEM_TEACHER } from '@/llm/prompts'
 import { fileToBase64, pdfToText } from '@/lib/pdf'
-import { emptyStandard, normalizePlan, subjectsOf } from '@/lib/plan'
-import { LEVEL_SHORT, type EvalPlan, type Standard } from '@/lib/types'
+import { emptyStandard, normalizePlan, sanitizePlan, subjectsOf } from '@/lib/plan'
+import { LEVEL_SHORT, type Standard } from '@/lib/types'
 
 export default function PlanPage() {
   const client = useClient()
@@ -42,7 +42,8 @@ export default function PlanPage() {
       else opts.pdfText = await pdfToText(file)
       setBusy('AI가 평가계획을 읽는 중… (10~30초)')
       const raw = await generateJSON<any>(client, { system: SYSTEM_TEACHER, prompt: PLAN_EXTRACT_PROMPT, ...opts, temperature: 0.1, maxTokens: 16000 })
-      const p = normalizePlan(raw, file.name)
+      // Gemini가 가끔 원소 하나짜리 배열로 감싸 돌려줍니다
+      const p = normalizePlan(Array.isArray(raw) ? raw[0] ?? {} : raw ?? {}, file.name)
       if (!p.standards.length) throw new Error('성취기준을 찾지 못했습니다. 평가 계획표 PDF가 맞는지 확인해 주세요.')
       addPlan(p)
       setSubject('')
@@ -85,9 +86,9 @@ export default function PlanPage() {
   const importJson = async (file: File | undefined) => {
     if (!file) return
     try {
-      const p = JSON.parse(await file.text()) as EvalPlan
-      if (!Array.isArray(p.standards)) throw new Error('형식이 다릅니다')
-      addPlan({ ...p, id: p.id || Math.random().toString(36).slice(2), createdAt: Date.now() })
+      const p = JSON.parse(await file.text())
+      if (!p || !Array.isArray(p.standards)) throw new Error('형식이 다릅니다')
+      addPlan(sanitizePlan(p, file.name))
       toast('평가계획을 불러왔습니다')
     } catch (e: any) {
       setError(`JSON 불러오기 실패: ${e.message}`)

@@ -18,7 +18,7 @@
 ## 개인정보
 
 - 학생 **이름은 입력받지 않고 출석번호만** 사용합니다. API에는 번호와 성적·특성만 보냅니다.
-- API 키와 모든 데이터는 이 브라우저의 `localStorage`에만 저장됩니다.
+- API 키와 모든 데이터는 이 브라우저의 `localStorage`에만 저장됩니다. API 키는 선택한 AI 제공사로만 전송됩니다.
 - 나이스로 보내기 전 사람 이름 패턴·금지 문자·바이트 초과·중복 문장을 검사합니다.
 
 ## 개발
@@ -48,11 +48,19 @@ src/
 
 ## 배포
 
-`main`에 푸시하면 GitHub Actions가 빌드해 GitHub Pages에 올립니다 (`.github/workflows/deploy.yml`). 저장소 Settings → Pages → Source를 **GitHub Actions**로 한 번 설정해야 합니다.
+> **먼저 할 일:** 저장소 Settings → Pages → Source를 **GitHub Actions**로 바꿔야 합니다. 예전 단일 파일 버전처럼 "Deploy from a branch"로 두면 루트 `index.html`(Vite 개발용 진입점)이 그대로 서비스되어 빈 화면이 나옵니다.
+
+`main`에 푸시하면 GitHub Actions가 빌드해 GitHub Pages에 올립니다 (`.github/workflows/deploy.yml`). `npm ci`는 SheetJS 공식 배포처(`cdn.sheetjs.com`)에서 `xlsx`를 받습니다.
+
+## 나이스 확장 연동(2차)
+
+결과 화면의 "나이스로 보내기"는 입력 데이터를 `localStorage['saenggibu-neis']`에 `{ version: 1, payloads: NeisPayload[] }` 형태로 따로 저장합니다(`src/lib/types.ts`의 `NeisPayload`). 확장은 이 키만 읽습니다. 앱 본체 저장소 `saenggibu-v2`에는 API 키가 들어 있으므로 확장이 읽지 않습니다.
+
+바이트 검사 상한: 교과·창체 문단 1500B(경고), 행동특성은 목표 바이트 + 150B(오류). 학교급·항목별 기재요령에 맞춰 `src/lib/neis.ts`의 `NEIS_MAX_BYTES`를 조정하세요.
 
 ## 2차 계획
 
 - 크롬 확장 "AI 생기부 보조 생성기 → 나이스": 교과평가(단계 + 평가결과) → 저장 → 학기말종합의견 → 저장, 행발, 창체(자율 → 동아리 가져오기 → 진로) 순서로 자동 입력. 성명 열은 읽지 않음.
-- 도움말 페이지의 실제 화면 스크린샷 (`public/guide/step0.png` … `step5.png`)
+- 도움말 페이지의 실제 화면 스크린샷: `src/assets/guide/step0.png` … `step5.png`를 넣으면 빌드에 포함되고, 없는 단계는 도식으로 보입니다.
 
 이전 단일 파일 버전은 `legacy_index.html`에 남겨 두었습니다.

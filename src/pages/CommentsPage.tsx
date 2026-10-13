@@ -2,12 +2,12 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Alert, Card, CopyText, PageHeader, Spinner, toast } from '@/components/ui'
 import { useActivePlan, useClient, useStore } from '@/store'
-import { generateJSON } from '@/llm/provider'
+import { asArray, generateJSON } from '@/llm/provider'
 import { modeAPrompt, SYSTEM_TEACHER } from '@/llm/prompts'
 import { subjectsOf } from '@/lib/plan'
 import { downloadXlsx } from '@/lib/excel'
 import { LEVEL_KEYS, LEVEL_NAMES, type ModeAResult } from '@/lib/types'
-import { delay } from '@/lib/text'
+import { hash, sleep } from '@/lib/text'
 
 export function ModeSwitch({ mode }: { mode: 'A' | 'B' }) {
   return (
@@ -52,13 +52,16 @@ export default function CommentsPage() {
     try {
       for (let i = 0; i < allChosen.length; i++) {
         setBusy(`평어 생성 중… (${i + 1}/${allChosen.length})`)
-        if (i > 0) await delay(/pro/.test(client.model) ? 20000 : 2500)
+        if (i > 0) await sleep(/pro/.test(client.model) ? 20000 : 2500)
         const s = allChosen[i]
-        const out = await generateJSON<Array<{ standardId: string; levels: ModeAResult['levels'] }>>(client, {
+        const out = await generateJSON<unknown>(client, {
           system: SYSTEM_TEACHER, prompt: modeAPrompt([s], counts, two ? 2 : 1, settings.ending), temperature: 0.8,
         })
-        const r = Array.isArray(out) ? out[0] : (out as any)
-        acc.push({ standardId: s.id, code: s.code, text: s.text, levels: normalizeLevels(r?.levels) })
+        const list = asArray(out)
+        const r = list.find((x) => x?.standardId === s.id) ?? list[0]
+        const levels = normalizeLevels(r?.levels)
+        if (LEVEL_KEYS.every((k) => !levels[k].length)) throw new Error('AI 응답에서 평어를 찾지 못했습니다. 다시 시도해 주세요.')
+        acc.push({ standardId: s.id, code: s.code, text: s.text, levels })
         setModeA({ modeAResults: [...acc] })
       }
       setTab(0)
@@ -170,7 +173,7 @@ export default function CommentsPage() {
                     <span className="inline-flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full" style={{ background: `var(--color-lv${i}-ink)` }} />{LEVEL_NAMES[i]}</span><span className="font-medium text-[12px]">{cur.levels[k].length}</span>
                   </div>
                   <div className="flex flex-col">
-                    {cur.levels[k].map((t, j) => <CopyText key={j} id={`a-${cur.standardId}-${k}-${j}`} text={t} className="!rounded-none !bg-transparent border-t border-line" />)}
+                    {cur.levels[k].map((t, j) => <CopyText key={j} id={`a-${cur.standardId}-${k}-${j}-${hash(t)}`} text={t} className="!rounded-none !bg-transparent border-t border-line" />)}
                   </div>
                 </div>
               ))}

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Alert, Card, CopyText, LevelPill, PageHeader, Progress, Spinner, toast } from '@/components/ui'
+import { Alert, Card, CopyText, IssueList, LevelPill, PageHeader, Progress, Spinner, Stat, toast } from '@/components/ui'
 import { useActivePlan, useClient, useStore } from '@/store'
 import { abortGeneration, buildStudentInput, generateStudents, genState, useGenState } from '@/llm/generateModeB'
 import { validateComment, hasErrors, type Issue } from '@/lib/validate'
 import { downloadXlsx } from '@/lib/excel'
-import { buildSubjectPayloads } from '@/lib/neis'
-import { neisBytes, splitSentences } from '@/lib/text'
+import { buildSubjectPayloads, neisByteLimit } from '@/lib/neis'
+import { flatten, hash, neisBytes, splitSentences } from '@/lib/text'
 import { LEVEL_SHORT, type Standard, type StudentResult, type SubjectComment } from '@/lib/types'
 
 type View = 'student' | 'subject'
@@ -18,18 +18,14 @@ interface Editing {
 }
 
 const keyOf = (student: number, subject: string) => `${student}|${subject}`
+const SUBJECT_LIMIT = neisByteLimit('subject', 0)
 /** 문장이 바뀌면 복사 표시(붉은색)도 새로 시작하도록 id에 문장 해시를 붙입니다 */
-function hash(t: string) {
-  let h = 5381
-  for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0
-  return (h >>> 0).toString(36)
-}
 const copyId = (student: number, sc: SubjectComment) => `r-${student}-${sc.subject}-${hash(sc.text)}`
-const flatten = (t: string) => t.replace(/\s*\n+\s*/g, ' ').replace(/\s{2,}/g, ' ').trim()
 
-/** 결과 문단에서 성취기준당 문장 수(1 또는 2)를 추정합니다 */
+/** 생성 때의 성취기준당 문장 수(1 또는 2). 예전 결과는 문단에서 추정합니다 */
 function sentencesOf(r: StudentResult | undefined, fallback: 1 | 2): 1 | 2 {
   if (!r) return fallback
+  if (r.sentences) return r.sentences
   let s = 0
   let k = 0
   for (const sc of r.subjects) {
@@ -49,29 +45,6 @@ function sheetName(name: string, used: Set<string>) {
   return n
 }
 
-function Stat({ label, value, of, cls = '' }: { label: string; value: number; of?: number; cls?: string }) {
-  return (
-    <div className="flex flex-col min-w-[64px]">
-      <div className={`text-[30px] font-light leading-none tracking-[-0.02em] ${cls}`}>
-        {value}
-        {of !== undefined && <span className="text-[16px] text-muted-2"> / {of}</span>}
-      </div>
-      <div className="text-[12px] text-muted mt-1.5">{label}</div>
-    </div>
-  )
-}
-
-function IssueList({ issues }: { issues: Issue[] }) {
-  if (!issues.length) return <span className="font-bold text-lv0-ink">검사 통과</span>
-  return (
-    <>
-      {issues.map((it, i) => (
-        <span key={i} className={`font-bold ${it.level === 'error' ? 'text-lv3-ink' : 'text-lv2-ink'}`}>{it.message}</span>
-      ))}
-    </>
-  )
-}
-
 function StandardList({ sc, stdById }: { sc: SubjectComment; stdById: Map<string, Standard> }) {
   return (
     <ul className="m-0 p-0 list-none flex flex-col gap-1.5">
@@ -81,7 +54,7 @@ function StandardList({ sc, stdById }: { sc: SubjectComment; stdById: Map<string
         return (
           <li key={id + i} className="flex items-center gap-2 text-[12px] min-w-0">
             {lv !== undefined && <LevelPill level={lv} />}
-            <span className="font-mono text-accent font-bold truncate" title={std?.text}>{std?.code || std?.text.slice(0, 12) || '성취기준'}</span>
+            <span className="font-mono text-accent font-bold truncate" title={std?.text}>{std?.code || std?.text?.slice(0, 12) || '성취기준'}</span>
           </li>
         )
       })}
@@ -147,7 +120,7 @@ export default function ResultsPage() {
     for (const r of results)
       for (const sc of r.subjects) {
         const others = (textsBySubject.get(sc.subject) ?? []).filter((x) => x.student !== r.student).map((x) => x.text)
-        m.set(keyOf(r.student, sc.subject), validateComment(sc.text, { others }))
+        m.set(keyOf(r.student, sc.subject), validateComment(sc.text, { others, ...SUBJECT_LIMIT }))
       }
     return m
   }, [results, textsBySubject])
@@ -344,7 +317,7 @@ export default function ResultsPage() {
     const isEditing = editing?.student === r.student && editing.subject === sc.subject
     if (isEditing) {
       const draft = editing.draft
-      const draftIssues = validateComment(flatten(draft), { others: othersFor(r.student, sc.subject) })
+      const draftIssues = validateComment(flatten(draft), { others: othersFor(r.student, sc.subject), ...SUBJECT_LIMIT })
       return (
         <div className="flex flex-col gap-2 min-w-0">
           <textarea

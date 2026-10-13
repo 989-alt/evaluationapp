@@ -1,40 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Alert, Card, CopyText, PageHeader, Spinner, toast } from '@/components/ui'
+import { Alert, Card, CopyText, IssueList, PageHeader, Spinner, toast } from '@/components/ui'
 import { useActivePlan, useClient, useStore } from '@/store'
-import { generateJSON } from '@/llm/provider'
+import { asArray, generateJSON } from '@/llm/provider'
 import { creativePrompt, SYSTEM_TEACHER } from '@/llm/prompts'
 import { downloadXlsx } from '@/lib/excel'
-import { validateComment, type Issue } from '@/lib/validate'
-import { neisBytes } from '@/lib/text'
+import { validateComment } from '@/lib/validate'
+import { neisByteLimit } from '@/lib/neis'
+import { flatten, hash, neisBytes } from '@/lib/text'
 import type { CreativeInput, CreativeResult } from '@/lib/types'
 
-function hash(t: string) {
-  let h = 5381
-  for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0
-  return (h >>> 0).toString(36)
-}
-const flatten = (t: string) => t.replace(/\s*\n+\s*/g, ' ').replace(/\s{2,}/g, ' ').trim()
+const CREATIVE_LIMIT = neisByteLimit('creative', 0)
 const clampCount = (n: number) => Math.max(1, Math.min(20, Math.round(n) || 1))
 
 function parseResults(out: unknown): Array<{ original: string; variations: string[] }> {
-  const raw: any = out
-  const list: any[] = Array.isArray(raw) ? raw : Array.isArray(raw?.results) ? raw.results : raw && typeof raw === 'object' && 'variations' in raw ? [raw] : []
-  return list.map((x) => ({
+  return asArray(out).map((x) => ({
     original: flatten(String(x?.original ?? '')),
     variations: (Array.isArray(x?.variations) ? x.variations : []).map((v: unknown) => flatten(String(v ?? ''))).filter(Boolean),
   }))
-}
-
-function IssueList({ issues }: { issues: Issue[] }) {
-  if (!issues.length) return <span className="font-bold text-lv0-ink">검사 통과</span>
-  return (
-    <>
-      {issues.map((it, i) => (
-        <span key={i} className={`font-bold ${it.level === 'error' ? 'text-lv3-ink' : 'text-lv2-ink'}`}>{it.message}</span>
-      ))}
-    </>
-  )
 }
 
 export default function CreativePage() {
@@ -50,7 +33,14 @@ export default function CreativePage() {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const abortRef = useRef<AbortController | null>(null)
-  useEffect(() => () => abortRef.current?.abort(), [])
+  useEffect(
+    () => () => {
+      if (!abortRef.current) return
+      abortRef.current.abort()
+      toast('다른 화면으로 이동해 창체 문장 생성을 중지했습니다')
+    },
+    [],
+  )
 
   const areas = useMemo(() => plan?.creative ?? [], [plan])
   const curArea = areas.find((a) => a.area === area) ?? areas[0] ?? null
@@ -196,7 +186,7 @@ export default function CreativePage() {
                 <span className="text-[12px] text-muted">{r.variations.length}개</span>
               </div>
               {r.variations.map((v, j) => {
-                const issues = validateComment(v)
+                const issues = validateComment(v, CREATIVE_LIMIT)
                 return (
                   <div key={j} className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-x-4 gap-y-1 px-6 py-3 border-t border-line items-center">
                     <CopyText id={`c-${i}-${j}-${hash(v)}`} text={v} />

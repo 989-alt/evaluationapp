@@ -2,16 +2,19 @@ import { Link } from 'react-router-dom'
 import { Card, PageHeader, toast } from '@/components/ui'
 import { useStore } from '@/store'
 import { validateComment } from '@/lib/validate'
+import { neisByteLimit } from '@/lib/neis'
 import { copyText } from '@/lib/text'
 import type { NeisPayload } from '@/lib/types'
 
 const KIND_LABEL: Record<NeisPayload['kind'], string> = { subject: '교과 평어', behavior: '행동특성', creative: '창체' }
 
-function preflight(p: NeisPayload) {
-  const c = { name: 0, chars: 0, bytes: 0, duplicate: 0 }
+function preflight(p: NeisPayload, behaviorBytes: number) {
+  const c = { empty: 0, name: 0, chars: 0, bytes: 0, duplicate: 0 }
+  const limit = neisByteLimit(p.kind, behaviorBytes)
   p.rows.forEach((row, i) => {
     const others = p.rows.filter((_, j) => j !== i).map((r) => r.text)
-    const codes = new Set(validateComment(row.text, { others }).map((x) => x.code))
+    const codes = new Set(validateComment(row.text, { others, ...limit }).map((x) => x.code))
+    if (codes.has('empty')) c.empty++
     if (codes.has('name')) c.name++
     if (codes.has('chars')) c.chars++
     if (codes.has('bytes')) c.bytes++
@@ -39,7 +42,7 @@ function download(p: NeisPayload) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `nais_${p.kind}_${(p.subject ?? 'all').replace(/[\\/:*?"<>|\s]+/g, '_')}_${fileDate(p.createdAt)}.json`
+  a.download = `neis_${p.kind}_${(p.subject ?? 'all').replace(/[\\/:*?"<>|\s]+/g, '_')}_${fileDate(p.createdAt)}.json`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -62,6 +65,7 @@ const BOUNDARIES = [
 export default function NeisPage() {
   const payloads = useStore((s) => s.neisPayloads)
   const setPayloads = useStore((s) => s.setNeisPayloads)
+  const behaviorBytes = useStore((s) => s.settings.behaviorBytes)
 
   return (
     <>
@@ -102,7 +106,8 @@ export default function NeisPage() {
         ) : (
           <ul className="m-0 p-0 list-none flex flex-col gap-3">
             {payloads.map((p, idx) => {
-              const c = preflight(p)
+              const c = preflight(p, behaviorBytes)
+              const limit = neisByteLimit(p.kind, behaviorBytes).maxBytes
               return (
                 <li key={`${p.kind}-${p.subject ?? ''}-${idx}`} className="rounded-[14px] bg-surface-2 px-5 py-4 flex flex-wrap items-center gap-x-5 gap-y-3">
                   <div className="min-w-[200px] flex-1">
@@ -113,13 +118,14 @@ export default function NeisPage() {
                     <div className="text-[12px] text-muted mt-1">{p.rows.length}행 · {new Date(p.createdAt).toLocaleString()}</div>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
+                    {c.empty > 0 && <Check label="빈 문장" n={c.empty} />}
                     <Check label="이름 의심" n={c.name} />
                     <Check label="허용 외 문자" n={c.chars} />
-                    <Check label="바이트 초과" n={c.bytes} />
+                    <Check label={`바이트 초과(${limit}B)`} n={c.bytes} />
                     <Check label="중복 문장" n={c.duplicate} />
                   </div>
                   <div className="flex gap-2">
-                    <button type="button" className="btn btn-sm" onClick={async () => { await copyText(JSON.stringify(p, null, 2)); toast('JSON을 복사했습니다') }}>JSON 복사</button>
+                    <button type="button" className="btn btn-sm" onClick={async () => toast((await copyText(JSON.stringify(p, null, 2))) ? 'JSON을 복사했습니다' : '복사하지 못했습니다. "JSON 내려받기"를 쓰세요.')}>JSON 복사</button>
                     <button type="button" className="btn btn-sm" onClick={() => download(p)}>JSON 내려받기</button>
                     <button type="button" className="btn btn-sm" onClick={() => setPayloads(payloads.filter((_, j) => j !== idx))}>삭제</button>
                   </div>

@@ -1,10 +1,10 @@
 import { useSyncExternalStore } from 'react'
 import type { Client } from './provider'
-import { generateJSON } from './provider'
+import { asArray, generateJSON } from './provider'
 import { modeBPrompt, SYSTEM_TEACHER, type StudentSubjectInput } from './prompts'
 import type { EvalPlan, GradeMap, StudentResult, SubjectComment } from '@/lib/types'
 import { subjectsOf } from '@/lib/plan'
-import { splitSentences } from '@/lib/text'
+import { flatten, sleep, splitSentences } from '@/lib/text'
 import { useStore } from '@/store'
 
 // ---------- generation state (module-level external store) ----------
@@ -85,21 +85,6 @@ function avoidFor(pool: Map<number, StudentResult>, student: number, subjects: s
   return acc
 }
 
-function sleep(ms: number, signal: AbortSignal) {
-  return new Promise<void>((resolve) => {
-    if (signal.aborted) return resolve()
-    const t = window.setTimeout(done, ms)
-    function done() {
-      window.clearTimeout(t)
-      signal.removeEventListener('abort', done)
-      resolve()
-    }
-    signal.addEventListener('abort', done)
-  })
-}
-
-const clean = (t: unknown) => String(t ?? '').replace(/\s*\n+\s*/g, ' ').replace(/\s{2,}/g, ' ').trim()
-
 interface RawOut {
   student?: number
   subjects?: Array<{ subject?: string; text?: string }>
@@ -114,8 +99,14 @@ function unwrap(out: unknown, student: number): RawOut {
     }
     if (o && typeof o === 'object' && !Array.isArray((o as RawOut).subjects)) {
       const w = o as Record<string, unknown>
+      // { items|results|data|students: [...] } 처럼 배열을 감싼 경우
+      const list = asArray(w)
+      if (list.length && list[0] !== w) {
+        o = list
+        continue
+      }
       const inner = w.result ?? w.data ?? w.students
-      if (inner !== undefined) {
+      if (inner && typeof inner === 'object') {
         o = inner
         continue
       }
@@ -126,7 +117,7 @@ function unwrap(out: unknown, student: number): RawOut {
 }
 
 /** AI 응답을 결과로 바꿉니다. 빈 교과가 하나라도 있으면 오류를 던집니다. */
-function toResult(student: number, input: StudentSubjectInput[], out: unknown): StudentResult {
+function toResult(student: number, input: StudentSubjectInput[], out: unknown, sentences: 1 | 2): StudentResult {
   const o = unwrap(out, student)
   const raw = Array.isArray(o.subjects) ? o.subjects : []
   const norm = (s: string) => s.replace(/\s+/g, '')
@@ -134,14 +125,14 @@ function toResult(student: number, input: StudentSubjectInput[], out: unknown): 
     const hit = raw.find((r) => norm(String(r?.subject ?? '')) === norm(inp.subject)) ?? (raw.length === input.length ? raw[i] : undefined)
     return {
       subject: inp.subject,
-      text: clean(hit?.text),
+      text: flatten(hit?.text),
       standardIds: inp.items.map((it) => it.standardId),
       levels: inp.items.map((it) => it.level),
     }
   })
   const missing = subjects.filter((sc) => !sc.text).map((sc) => sc.subject)
   if (missing.length) throw new Error(`AI 응답에서 ${missing.join(', ')} 평어를 찾지 못했습니다`)
-  return { student, subjects, generatedAt: Date.now() }
+  return { student, subjects, generatedAt: Date.now(), sentences }
 }
 
 // ---------- main ----------
@@ -212,7 +203,7 @@ export async function generateStudents(opts: GenerateStudentsOptions): Promise<v
           temperature: 0.8,
           signal,
         })
-        const result = toResult(student, input, out)
+        const result = toResult(student, input, out, sentences)
         pool.set(student, result)
         useStore.getState().upsertResult(result)
       } catch (e: unknown) {

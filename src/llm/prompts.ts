@@ -1,5 +1,5 @@
-import type { EvalPlan, Level, Standard } from '@/lib/types'
-import { LEVEL_KEYS, LEVEL_NAMES } from '@/lib/types'
+import type { Level, Standard } from '@/lib/types'
+import { LEVEL_NAMES } from '@/lib/types'
 
 export const SYSTEM_TEACHER = `당신은 한국 초등학교 담임 교사의 학교생활기록부 작성을 돕는 보조자입니다. 반드시 요청된 JSON만 출력합니다. 설명, 머리말, 코드펜스를 붙이지 않습니다.`
 
@@ -10,7 +10,7 @@ export function endingRule(ending: '함' | '하였음') {
 }
 
 export const COMMON_RULES = `- 주어(학생 이름, "학생은" 등)는 쓰지 않습니다.
-- 특수문자는 온점(.)과 반점(,)만 허용합니다. 따옴표, 괄호, 느낌표, 물음표, 이모지, 줄바꿈을 쓰지 않습니다.
+- 특수문자는 온점(.)과 반점(,)만 씁니다(가운뎃점(·)은 허용). 따옴표, 괄호, 느낌표, 물음표, 물결표, 퍼센트 기호, 이모지, 줄바꿈을 쓰지 않습니다.
 - 과장된 수식이나 평가 기준에 없는 내용을 지어내지 않습니다.
 - 사람 이름, 학교 이름, 지역 이름을 쓰지 않습니다.`
 
@@ -69,8 +69,8 @@ ${JSON.stringify(items, null, 1)}
 - ${endingRule(ending)}
 ${COMMON_RULES}
 
-[출력(JSON 배열만)]
-[{ "standardId": "...", "levels": { "veryGood": ["..."], "good": ["..."], "average": ["..."], "needsEffort": ["..."] } }]`
+[출력(JSON만)]
+{ "items": [{ "standardId": "...", "levels": { "veryGood": ["..."], "good": ["..."], "average": ["..."], "needsEffort": ["..."] } }] }`
 }
 
 export interface StudentSubjectInput {
@@ -117,9 +117,10 @@ ${JSON.stringify(students, null, 1)}
 3. ${endingRule(ending)}
 ${COMMON_RULES}
 4. 학생마다 서로 다른 표현을 사용합니다. 같은 문장을 반복하지 않습니다.
+5. 특성 이름을 그대로 옮겨 적지 말고 행동으로 풀어 씁니다.
 
-[출력(JSON 배열만)]
-[{ "id": 1, "text": "..." }]`
+[출력(JSON만)]
+{ "items": [{ "id": 1, "text": "..." }] }`
 }
 
 export function creativePrompt(inputs: Array<{ text: string; count: number }>, ending: '함' | '하였음') {
@@ -134,14 +135,6 @@ ${JSON.stringify(inputs, null, 1)}
 3. ${endingRule(ending)}
 ${COMMON_RULES}
 
-[출력(JSON 배열만)]
-[{ "original": "...", "variations": ["...", "..."] }]`
+[출력(JSON만)]
+{ "items": [{ "original": "...", "variations": ["...", "..."] }] }`
 }
-
-export function planToIds(plan: EvalPlan) {
-  const byId = new Map<string, Standard>()
-  for (const s of plan.standards) byId.set(s.id, s)
-  return byId
-}
-
-export { LEVEL_KEYS }

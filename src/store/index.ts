@@ -4,6 +4,17 @@ import type {
   BehaviorResult, BehaviorStudent, CreativeInput, CreativeResult, EvalPlan, GradeMap, Level, ModeAResult,
   ModelInfo, NeisPayload, Provider, Settings, StudentResult,
 } from '@/lib/types'
+import { repairPlan } from '@/lib/plan'
+
+/** 크롬 확장(2차)이 읽는 나이스 입력 데이터. API 키가 든 저장소 본체 대신 이 키만 읽게 합니다 */
+export const NEIS_STORAGE_KEY = 'saenggibu-neis'
+function mirrorNeis(payloads: NeisPayload[]) {
+  try {
+    localStorage.setItem(NEIS_STORAGE_KEY, JSON.stringify({ version: 1, payloads }))
+  } catch {
+    // 저장 공간이 없거나 막힌 경우 무시
+  }
+}
 
 interface State {
   settings: Settings
@@ -135,11 +146,21 @@ export const useStore = create<State>()(
 
       resetAll: () => {
         localStorage.removeItem('saenggibu-v2')
+        localStorage.removeItem(NEIS_STORAGE_KEY)
         location.reload()
       },
     }),
     {
       name: 'saenggibu-v2',
+      version: 1,
+      // v0(버전 없음) → v1: 구조 변경 없음. migrate가 없으면 zustand가 저장된 상태를 버립니다
+      migrate: (persisted) => persisted as State,
+      // 기본 병합은 얕아서 나중에 추가한 settings 필드가 사라지므로 settings는 한 단계 더 병합합니다
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<State>
+        const plans = Array.isArray(p.plans) ? p.plans.map(repairPlan) : current.plans
+        return { ...current, ...p, plans, settings: { ...current.settings, ...(p.settings ?? {}) }, copied: {} }
+      },
       partialize: (s) => {
         const { copied, ...rest } = s
         void copied
@@ -166,3 +187,9 @@ export function modelsByTier(models: ModelInfo[]) {
   const t = (k: ModelInfo['tier']) => models.filter((m) => m.tier === k)
   return { recommended: t('recommended'), fast: t('fast'), best: t('best'), other: t('other') }
 }
+
+// 나이스 데이터가 바뀔 때마다 별도 키에 복사합니다
+useStore.subscribe((s, prev) => {
+  if (s.neisPayloads !== prev.neisPayloads) mirrorNeis(s.neisPayloads)
+})
+if (useStore.getState().neisPayloads.length) mirrorNeis(useStore.getState().neisPayloads)

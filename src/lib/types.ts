@@ -82,6 +82,8 @@ export interface StudentResult {
   student: number
   subjects: SubjectComment[]
   generatedAt: number
+  /** 생성할 때의 성취기준당 문장 수 */
+  sentences?: 1 | 2
   error?: string
 }
 

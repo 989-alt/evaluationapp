@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Alert, Card, PageHeader, Spinner, toast } from '@/components/ui'
 import { useStore, modelsByTier } from '@/store'
@@ -16,6 +16,15 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [manual, setManual] = useState<Provider | null>(null)
+  const [bytesDraft, setBytesDraft] = useState(String(settings.behaviorBytes))
+  useEffect(() => setBytesDraft(String(settings.behaviorBytes)), [settings.behaviorBytes])
+  const commitBytes = () => {
+    const n = Number(bytesDraft)
+    if (bytesDraft.trim() === '' || !Number.isFinite(n)) return setBytesDraft(String(settings.behaviorBytes))
+    const v = Math.max(100, Math.min(3000, Math.round(n)))
+    setSettings({ behaviorBytes: v })
+    setBytesDraft(String(v))
+  }
 
   const provider = settings.provider
 
@@ -66,7 +75,7 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="STEP 0 · 설정"
         title={<>처음 한 번만 설정하면<br />다음부터는 바로 시작합니다</>}
-        aside={<p className="m-0 max-w-[360px] text-muted">API 키는 이 브라우저에만 저장되고 어떤 서버로도 가지 않습니다. 키를 붙여넣으면 제공사를 알아보고 쓸 수 있는 모델을 보여줍니다.</p>}
+        aside={<p className="m-0 max-w-[360px] text-muted">API 키는 이 브라우저에만 저장되고, 선택한 AI 제공사(Google·Anthropic·OpenAI)로만 전송됩니다. 키를 붙여넣으면 제공사를 알아보고 쓸 수 있는 모델을 보여줍니다.</p>}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -135,7 +144,7 @@ export default function SettingsPage() {
                   )}
                 </>
               ) : (
-                <div className="px-4 py-6 text-[13px] text-muted">API 키를 넣고 "연결 확인"을 누르면 실제로 쓸 수 있는 모델만 보여줍니다. 모델 이름은 저장하지 않고 매번 API에서 받아옵니다.</div>
+                <div className="px-4 py-6 text-[13px] text-muted">API 키를 넣고 "연결 확인"을 누르면 실제로 쓸 수 있는 모델만 보여줍니다. 목록은 이 브라우저에 저장되며 '목록 새로고침'으로 다시 받습니다.</div>
               )}
             </div>
           </Card>
@@ -154,7 +163,7 @@ export default function SettingsPage() {
           <Card className="p-6 flex flex-col gap-3">
             <Step n={3} title="개인정보" />
             <label className="flex gap-2.5 items-start text-[13px]"><input type="checkbox" checked disabled className="mt-0.5 w-4 h-4 accent-ink" /><span><strong>학생 이름 대신 출석번호만 전송</strong><span className="block text-muted">평어 · 행발 · 창체 모두. 끌 수 없습니다.</span></span></label>
-            <label className="flex gap-2.5 items-start text-[13px]"><input type="checkbox" checked={settings.persistResults} onChange={(e) => setSettings({ persistResults: e.target.checked })} className="mt-0.5 w-4 h-4 accent-ink" /><span>생성 결과를 이 브라우저에 저장 (새로고침해도 유지)</span></label>
+            <label className="flex gap-2.5 items-start text-[13px]"><input type="checkbox" checked={settings.persistResults} onChange={(e) => setSettings({ persistResults: e.target.checked })} className="mt-0.5 w-4 h-4 accent-ink" /><span>생성 결과를 이 브라우저에 저장 (새로고침해도 유지)<span className="block text-muted">나이스로 보낸 데이터는 확장이 읽어야 하므로 항상 저장됩니다.</span></span></label>
             <button type="button" className="btn btn-sm self-start text-lv3-ink" onClick={() => { if (confirm('평가계획, 성적, 결과, API 키를 모두 지웁니다. 계속할까요?')) resetAll() }}>이 브라우저의 모든 데이터 지우기</button>
           </Card>
 
@@ -166,7 +175,7 @@ export default function SettingsPage() {
               <label className="flex justify-between items-center gap-2"><span>교과·창체 성취기준당</span>
                 <select value={settings.sentencesPerStandard} onChange={(e) => setSettings({ sentencesPerStandard: Number(e.target.value) as 1 | 2 })} className="field !w-auto !py-1.5"><option value={1}>1문장 (기본)</option><option value={2}>2문장</option></select></label>
               <label className="flex justify-between items-center gap-2"><span>행발 목표 분량</span>
-                <span className="inline-flex items-center gap-1.5"><input type="number" value={settings.behaviorBytes} min={200} max={1500} step={50} onChange={(e) => setSettings({ behaviorBytes: Number(e.target.value) || 700 })} className="field !w-[80px] text-right !py-1.5" />Bytes 내외</span></label>
+                <span className="inline-flex items-center gap-1.5"><input type="number" value={bytesDraft} min={100} max={3000} step={50} onChange={(e) => setBytesDraft(e.target.value)} onBlur={commitBytes} onKeyDown={(e) => { if (e.key === 'Enter') commitBytes() }} className="field !w-[80px] text-right !py-1.5" />Bytes 내외</span></label>
             </div>
           </Card>
         </div>
