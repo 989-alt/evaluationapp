@@ -55,6 +55,8 @@ export interface Settings {
   ending: '함' | '하였음'
   sentencesPerStandard: 1 | 2
   behaviorBytes: number
+  /** 교과 평어 한 교과 문단의 목표 바이트(한 번 생성 기준) */
+  subjectBytes: number
   persistResults: boolean
   guideSeen: boolean
 }

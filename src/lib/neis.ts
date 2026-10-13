@@ -2,17 +2,15 @@ import { LEVEL_SHORT, type EvalPlan, type NeisPayload, type Standard, type Stude
 import type { ValidateOptions } from './validate'
 
 /**
- * 나이스 입력 상한(한글 3B). 교과 학기말 종합의견·창체 특기사항 문단은 1500B를 넉넉한 상한으로 보고 경고만 합니다.
- * 기재요령(학교급·항목별 글자 수)을 확인한 뒤 조정하세요.
+ * 나이스에는 고정 상한이 없습니다. 분량은 "목표 바이트"로만 다룹니다(교과 평어·행발 모두 설정에서 조정).
+ * 행발은 목표 + 150B를 넘으면 참고용 경고만 띄우고, 교과·창체는 바이트 검사를 하지 않습니다.
  */
-export const NEIS_MAX_BYTES = { subject: 1500, creative: 1500 } as const
-/** 행동특성 및 종합의견은 목표 바이트 + 150B를 넘으면 오류로 봅니다 */
 export const BEHAVIOR_EXTRA_BYTES = 150
 
-/** 종류별 바이트 검사 옵션. 행발은 오류, 교과·창체는 경고 */
+/** 종류별 바이트 검사 옵션. 행발만 경고, 교과·창체는 검사 없음 */
 export function neisByteLimit(kind: NeisPayload['kind'], behaviorBytes: number): Pick<ValidateOptions, 'maxBytes' | 'maxBytesLevel'> {
-  if (kind === 'behavior') return { maxBytes: behaviorBytes + BEHAVIOR_EXTRA_BYTES, maxBytesLevel: 'error' }
-  return { maxBytes: NEIS_MAX_BYTES[kind], maxBytesLevel: 'warn' }
+  if (kind === 'behavior') return { maxBytes: behaviorBytes + BEHAVIOR_EXTRA_BYTES, maxBytesLevel: 'warn' }
+  return {}
 }
 
 /**

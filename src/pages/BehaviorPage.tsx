@@ -125,7 +125,7 @@ export default function BehaviorPage() {
     const m = new Map<number, Issue[]>()
     for (const r of shown) {
       const others = shown.filter((x) => x.student !== r.student).map((x) => x.text)
-      m.set(r.student, validateComment(r.text, { maxBytes, others }))
+      m.set(r.student, validateComment(r.text, { maxBytes, maxBytesLevel: 'warn', others }))
     }
     return m
   }, [shown, maxBytes])
@@ -343,7 +343,7 @@ export default function BehaviorPage() {
             onKeyDown={(e) => { if (e.key === 'Enter') commitBytes() }}
             className="field !w-24 !py-1.5 text-right"
           />
-          <span className="text-[12px] text-muted">한글 1자 = 3Byte · 검사 상한 {maxBytes}</span>
+          <span className="text-[12px] text-muted">한글 1자 = 3Byte · 상한 없음, {maxBytes}B를 넘으면 참고 경고</span>
         </label>
         <div className="flex-1 min-w-[260px] flex flex-wrap items-center justify-end gap-2 text-[13px]">
           <span className="text-muted">특성 칩 클릭</span>
@@ -394,7 +394,7 @@ export default function BehaviorPage() {
                       />
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
                         <span className="text-muted tabular-nums">{neisBytes(flatten(editing.draft))} Bytes</span>
-                        <IssueList issues={validateComment(flatten(editing.draft), { maxBytes, others: shown.filter((x) => x.student !== r.student).map((x) => x.text) })} />
+                        <IssueList issues={validateComment(flatten(editing.draft), { maxBytes, maxBytesLevel: 'warn', others: shown.filter((x) => x.student !== r.student).map((x) => x.text) })} />
                         <span className="flex-1" />
                         <button type="button" className="btn btn-sm" onClick={() => setEditing(null)}>취소</button>
                         <button type="button" className="btn-primary !px-4 !py-1.5 text-[13px]" disabled={!flatten(editing.draft)} onClick={saveEdit}>저장</button>

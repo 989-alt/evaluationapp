@@ -18,6 +18,13 @@ export default function SettingsPage() {
   const [manual, setManual] = useState<Provider | null>(null)
   const [bytesDraft, setBytesDraft] = useState(String(settings.behaviorBytes))
   useEffect(() => setBytesDraft(String(settings.behaviorBytes)), [settings.behaviorBytes])
+  const [subjDraft, setSubjDraft] = useState(String(settings.subjectBytes))
+  useEffect(() => setSubjDraft(String(settings.subjectBytes)), [settings.subjectBytes])
+  const commitSubj = () => {
+    const n = Number(subjDraft)
+    if (subjDraft.trim() === '' || !Number.isFinite(n)) return setSubjDraft(String(settings.subjectBytes))
+    setSettings({ subjectBytes: Math.max(100, Math.min(3000, Math.round(n))) })
+  }
   const commitBytes = () => {
     const n = Number(bytesDraft)
     if (bytesDraft.trim() === '' || !Number.isFinite(n)) return setBytesDraft(String(settings.behaviorBytes))
@@ -174,6 +181,8 @@ export default function SettingsPage() {
                 <select value={settings.ending} onChange={(e) => setSettings({ ending: e.target.value as any })} className="field !w-auto !py-1.5"><option value="함">-함. / -임.</option><option value="하였음">-하였음. / -이었음.</option></select></label>
               <label className="flex justify-between items-center gap-2"><span>교과·창체 성취기준당</span>
                 <select value={settings.sentencesPerStandard} onChange={(e) => setSettings({ sentencesPerStandard: Number(e.target.value) as 1 | 2 })} className="field !w-auto !py-1.5"><option value={1}>1문장 (기본)</option><option value={2}>2문장</option></select></label>
+              <label className="flex justify-between items-center gap-2"><span>교과 평어 목표 분량 <span className="text-muted">(교과당 · 한 번 생성 기준)</span></span>
+                <span className="inline-flex items-center gap-1.5"><input type="number" value={subjDraft} min={100} max={3000} step={50} onChange={(e) => setSubjDraft(e.target.value)} onBlur={commitSubj} onKeyDown={(e) => { if (e.key === 'Enter') commitSubj() }} className="field !w-[80px] text-right !py-1.5" />Bytes 내외</span></label>
               <label className="flex justify-between items-center gap-2"><span>행발 목표 분량</span>
                 <span className="inline-flex items-center gap-1.5"><input type="number" value={bytesDraft} min={100} max={3000} step={50} onChange={(e) => setBytesDraft(e.target.value)} onBlur={commitBytes} onKeyDown={(e) => { if (e.key === 'Enter') commitBytes() }} className="field !w-[80px] text-right !py-1.5" />Bytes 내외</span></label>
             </div>

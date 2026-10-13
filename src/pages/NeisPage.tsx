@@ -121,7 +121,7 @@ export default function NeisPage() {
                     {c.empty > 0 && <Check label="빈 문장" n={c.empty} />}
                     <Check label="이름 의심" n={c.name} />
                     <Check label="허용 외 문자" n={c.chars} />
-                    <Check label={`바이트 초과(${limit}B)`} n={c.bytes} />
+                    {limit !== undefined && <Check label={`바이트 초과(${limit}B 참고)`} n={c.bytes} />}
                     <Check label="중복 문장" n={c.duplicate} />
                   </div>
                   <div className="flex gap-2">

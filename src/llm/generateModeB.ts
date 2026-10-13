@@ -199,7 +199,7 @@ export async function generateStudents(opts: GenerateStudentsOptions): Promise<v
         const avoid = avoidFor(pool, student, input.map((s) => s.subject))
         const out = await generateJSON<unknown>(client, {
           system: SYSTEM_TEACHER,
-          prompt: modeBPrompt(student, input, sentences, ending, avoid),
+          prompt: modeBPrompt(student, input, sentences, ending, avoid, useStore.getState().settings.subjectBytes || 700),
           temperature: 0.8,
           signal,
         })

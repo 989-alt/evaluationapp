@@ -78,7 +78,8 @@ export interface StudentSubjectInput {
   items: Array<{ standardId: string; code: string; text: string; element?: string; level: Level; criterion: string }>
 }
 
-export function modeBPrompt(student: number, subjects: StudentSubjectInput[], sentences: 1 | 2, ending: '함' | '하였음', avoid: string[]) {
+export function modeBPrompt(student: number, subjects: StudentSubjectInput[], sentences: 1 | 2, ending: '함' | '하였음', avoid: string[], targetBytes = 700) {
+  const targetChars = Math.round(targetBytes / 3)
   const data = subjects.map((s) => ({
     subject: s.subject,
     standards: s.items.map((it) => ({ code: it.code, standard: it.text, element: it.element, level: LEVEL_NAMES[it.level], criterion: it.criterion })),
@@ -89,7 +90,7 @@ export function modeBPrompt(student: number, subjects: StudentSubjectInput[], se
 ${JSON.stringify(data, null, 1)}
 
 [작성 규칙]
-1. 교과마다 하나의 문단을 씁니다. 그 교과의 성취기준마다 ${sentences === 1 ? '정확히 1문장' : '정확히 2문장'}을 쓰고, 성취기준 순서대로 이어 붙여 한 문단(줄바꿈 없음)으로 만듭니다.
+1. 교과마다 하나의 문단을 씁니다. 그 교과의 성취기준마다 ${sentences === 1 ? '정확히 1문장' : '정확히 2문장'}을 쓰고, 성취기준 순서대로 이어 붙여 한 문단(줄바꿈 없음)으로 만듭니다. 교과 문단 하나의 분량은 공백 포함 약 ${targetChars}자(한글 1자 = 3Byte 기준 약 ${targetBytes}Byte) 내외로 맞춥니다. 성취기준이 적은 교과는 문장을 조금 더 구체적으로, 많은 교과는 간결하게 써서 분량을 맞춥니다.
 2. 각 문장은 해당 성취기준의 level(성취 수준)과 criterion(평가 기준 문장)을 근거로 합니다. 수준의 핵심 어휘를 유지하되 criterion을 그대로 베끼지 말고 자연스럽게 바꿔 씁니다.
    - 매우 잘함: "매우 정확하게", "구체적으로", "논리적으로", "탁월하게", "주도적으로" 등 최상위 표현. 적용·창의적 사고를 드러냄.
    - 잘함: "정확하게", "바르게", "적절하게", "알맞게". 오류 없이 무난하게 수행. "매우" 같은 최상급은 쓰지 않음.

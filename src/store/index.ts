@@ -76,6 +76,7 @@ const defaultSettings: Settings = {
   ending: '함',
   sentencesPerStandard: 1,
   behaviorBytes: 700,
+  subjectBytes: 700,
   persistResults: true,
   guideSeen: false,
 }
