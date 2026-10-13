@@ -22,10 +22,11 @@ export const PLAN_EXTRACT_PROMPT = `첨부된 "교수학습 및 평가 계획" �
 - criteria는 반드시 4개 문자열 배열, 순서는 [매우잘함, 잘함, 보통, 노력요함]. 문서가 3단계뿐이면 빈 문자열로 두지 말고 가장 가까운 수준의 문장을 복사하고 warnings에 적습니다.
 - 문장은 문서 그대로 옮기되 줄바꿈으로 끊긴 단어는 이어 붙입니다.
 - creative(창의적 체험활동): 영역(자율/동아리/진로)별 목표, 평가 요소 목록, 평가 방법, 시기.
+- 학교명은 추출하지 않습니다. school은 항상 빈 문자열("")로 둡니다. 교사 이름·연락처·주소 같은 개인정보도 어떤 칸에도 옮기지 않습니다.
 
 출력 형식:
 {
-  "school": "학교명 또는 빈 문자열",
+  "school": "",
   "grade": "6학년",
   "semester": "2학기",
   "year": "2025",
@@ -78,8 +79,7 @@ export interface StudentSubjectInput {
   items: Array<{ standardId: string; code: string; text: string; element?: string; level: Level; criterion: string }>
 }
 
-export function modeBPrompt(student: number, subjects: StudentSubjectInput[], sentences: 1 | 2, ending: '함' | '하였음', avoid: string[], targetBytes = 700) {
-  const targetChars = Math.round(targetBytes / 3)
+export function modeBPrompt(student: number, subjects: StudentSubjectInput[], sentences: 1 | 2, ending: '함' | '하였음', avoid: string[]) {
   const data = subjects.map((s) => ({
     subject: s.subject,
     standards: s.items.map((it) => ({ code: it.code, standard: it.text, element: it.element, level: LEVEL_NAMES[it.level], criterion: it.criterion })),
@@ -90,7 +90,7 @@ export function modeBPrompt(student: number, subjects: StudentSubjectInput[], se
 ${JSON.stringify(data, null, 1)}
 
 [작성 규칙]
-1. 교과마다 하나의 문단을 씁니다. 그 교과의 성취기준마다 ${sentences === 1 ? '정확히 1문장' : '정확히 2문장'}을 쓰고, 성취기준 순서대로 이어 붙여 한 문단(줄바꿈 없음)으로 만듭니다. 교과 문단 하나의 분량은 공백 포함 약 ${targetChars}자(한글 1자 = 3Byte 기준 약 ${targetBytes}Byte) 내외로 맞춥니다. 성취기준이 적은 교과는 문장을 조금 더 구체적으로, 많은 교과는 간결하게 써서 분량을 맞춥니다.
+1. 교과마다 하나의 문단을 씁니다. 그 교과의 성취기준마다 ${sentences === 1 ? '정확히 1문장' : '정확히 2문장'}을 쓰고, 성취기준 순서대로 이어 붙여 한 문단(줄바꿈 없음)으로 만듭니다. 분량 목표는 없습니다. 문장마다 해당 성취기준의 평가 기준에 담긴 내용을 빠짐없이, 군더더기 없이 씁니다.
 2. 각 문장은 해당 성취기준의 level(성취 수준)과 criterion(평가 기준 문장)을 근거로 합니다. 수준의 핵심 어휘를 유지하되 criterion을 그대로 베끼지 말고 자연스럽게 바꿔 씁니다.
    - 매우 잘함: "매우 정확하게", "구체적으로", "논리적으로", "탁월하게", "주도적으로" 등 최상위 표현. 적용·창의적 사고를 드러냄.
    - 잘함: "정확하게", "바르게", "적절하게", "알맞게". 오류 없이 무난하게 수행. "매우" 같은 최상급은 쓰지 않음.

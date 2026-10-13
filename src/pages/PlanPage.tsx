@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Alert, Card, PageHeader, Spinner, toast } from '@/components/ui'
+import { PaidKeyReminder, PIIGate, unconfirmedCount, usePIIGate, type PIIItem } from '@/components/PIIGate'
 import { useActivePlan, useClient, useStore } from '@/store'
 import { generateJSON, PROVIDER_PDF } from '@/llm/provider'
 import { PLAN_EXTRACT_PROMPT, SYSTEM_TEACHER } from '@/llm/prompts'
@@ -28,6 +29,11 @@ export default function PlanPage() {
   const curSubject = subjects.includes(subject) ? subject : subjects[0] ?? ''
   const rows = plan ? plan.standards.filter((s) => s.subject === curSubject) : []
 
+  // 개인정보 확인을 기다리는 PDF (글자를 뽑아 검사한 뒤 AI로 보냅니다)
+  const [pending, setPending] = useState<{ file: File; text: string } | null>(null)
+  const pendingItems = useMemo(() => (pending ? pdfItems(pending.text) : []), [pending])
+  const gate = usePIIGate(pendingItems)
+
   const onFile = async (file: File | undefined) => {
     if (!file) return
     if (!client) {
@@ -35,11 +41,33 @@ export default function PlanPage() {
       return
     }
     setError('')
+    setPending(null)
+    // 모든 제공사에서 글자를 먼저 뽑아 개인정보를 검사합니다(OpenAI는 이 글자를 그대로 보냄)
+    setBusy('파일 읽는 중…')
+    let text = ''
+    try {
+      text = await pdfToText(file)
+    } catch {
+      text = ''
+    }
+    setBusy('')
+    if (!text.trim()) toast('글자가 없는 스캔본이라 개인정보 검사를 하지 못했습니다')
+    if (unconfirmedCount(pdfItems(text)) > 0) {
+      setPending({ file, text })
+      return
+    }
+    await extract(file, text)
+  }
+
+  const extract = async (file: File, text: string) => {
+    if (!client) return
+    setPending(null)
+    setError('')
     try {
       setBusy('파일 읽는 중…')
       const opts: { pdfBase64?: string; pdfText?: string } = {}
       if (PROVIDER_PDF[client.provider]) opts.pdfBase64 = await fileToBase64(file)
-      else opts.pdfText = await pdfToText(file)
+      else opts.pdfText = text
       setBusy('AI가 평가계획을 읽는 중… (10~30초)')
       const raw = await generateJSON<any>(client, { system: SYSTEM_TEACHER, prompt: PLAN_EXTRACT_PROMPT, ...opts, temperature: 0.1, maxTokens: 16000 })
       // Gemini가 가끔 원소 하나짜리 배열로 감싸 돌려줍니다
@@ -133,11 +161,24 @@ export default function PlanPage() {
             )}
           </div>
           {!client && <Alert kind="warn">먼저 <Link className="underline" to="/settings">설정</Link>에서 API 키와 모델을 선택해 주세요.</Alert>}
+          {!pending && <PaidKeyReminder />}
+          {pending && (
+            <>
+              <PIIGate gate={gate} what="평가계획 추출" />
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="flex-1 min-w-[200px] text-[13px] text-muted truncate">대기 중: {pending.file.name}</span>
+                <button type="button" className="btn" onClick={() => setPending(null)}>취소</button>
+                <button type="button" className="btn-primary" disabled={!gate.ok || !!busy} onClick={() => void extract(pending.file, pending.text)}>
+                  {gate.ok ? '확인했습니다, 추출 시작' : '위 내용을 확인해 주세요'}
+                </button>
+              </div>
+            </>
+          )}
           {error && <Alert kind="error">{error}</Alert>}
           {plan && (
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-                <Stat label="학교 · 학년" value={[plan.school, plan.grade, plan.semester].filter(Boolean).join(' ') || plan.title} small />
+                <Stat label="학년 · 학기" value={[plan.grade, plan.semester].filter(Boolean).join(' ') || plan.title} small />
                 <Stat label="교과" value={String(subjects.length)} />
                 <Stat label="성취기준 · 기준문" value={<>{plan.standards.length} <span className="text-[14px] text-muted">/ {plan.standards.length * 4}</span></>} />
                 <Stat label="창체" value={plan.creative.map((c) => c.area).join(' · ') || '없음'} small />
@@ -240,6 +281,14 @@ export default function PlanPage() {
       )}
     </>
   )
+}
+
+/** PDF 글자를 쪽별 검사 입력으로 나눕니다(pdfToText의 쪽 구분 기준) */
+function pdfItems(text: string): PIIItem[] {
+  return text
+    .split('\n\n--- page ---\n\n')
+    .map((t, i) => ({ label: `PDF ${i + 1}쪽`, text: t }))
+    .filter((x) => x.text.trim())
 }
 
 function Stat({ label, value, small = false }: { label: string; value: React.ReactNode; small?: boolean }) {

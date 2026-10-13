@@ -11,6 +11,15 @@ export function downloadXlsx(fileName: string, sheets: Array<{ name: string; row
   XLSX.writeFile(wb, fileName)
 }
 
+/** 시트 이름 규칙(31자, 금지 문자 : \ / ? * [ ])에 맞추고 `used`와 겹치지 않게 번호를 붙입니다 */
+export function uniqueSheetName(name: string, used: Set<string>, fallback = '시트') {
+  const base = name.replace(/[:\\/?*[\]]/g, ' ').trim().slice(0, 28).replace(/^'+|'+$/g, '').trim() || fallback
+  let n = base
+  for (let i = 2; used.has(n); i++) n = `${base} ${i}`
+  used.add(n)
+  return n
+}
+
 export async function readXlsxRows(file: File): Promise<string[][]> {
   const buf = await file.arrayBuffer()
   const wb = XLSX.read(buf, { type: 'array' })

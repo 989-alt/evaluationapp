@@ -28,6 +28,7 @@ export interface CreativeArea {
 export interface EvalPlan {
   id: string
   title: string
+  /** 예전 버전에서 추출한 학교명. 지금은 추출하지 않고 화면에도 보이지 않습니다 */
   school?: string
   grade?: string
   semester?: string
@@ -56,9 +57,12 @@ export interface Settings {
   sentencesPerStandard: 1 | 2
   behaviorBytes: number
   /** 교과 평어 한 교과 문단의 목표 바이트(한 번 생성 기준) */
-  subjectBytes: number
+  /** 예전 설정 호환용. 교과 평어는 분량 목표 없이 성취기준당 문장 수로만 씁니다 */
+  subjectBytes?: number
   persistResults: boolean
   guideSeen: boolean
+  /** Google 키가 결제 계정이 연결된(유료) Cloud 프로젝트의 키임을 사용자가 확인함 */
+  paidKeyConfirmed?: boolean
 }
 
 // 방식 A 결과
@@ -122,6 +126,7 @@ export interface NeisPayload {
   rows: Array<{
     student: number
     text: string
-    standards?: Array<{ code: string; level: string; criterion: string }>
+    /** text·area는 나이스 성취기준 행을 찾는 데 씁니다(코드가 본문에 없을 때 본문·영역으로 대응) */
+    standards?: Array<{ code: string; level: string; criterion: string; text?: string; area?: string }>
   }>
 }

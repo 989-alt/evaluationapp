@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>AI 생기부 → 나이스</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="top">
+    <img src="../icons/icon48.png" alt="" width="28" height="28">
+    <div>
+      <div class="brand">생기부 → 나이스</div>
+      <div class="muted small" id="ver"></div>
+    </div>
+  </header>
+
+  <section class="card" id="card-data">
+    <div class="row-between">
+      <div>
+        <div class="eyebrow">DATA</div>
+        <h2>데이터</h2>
+      </div>
+      <span class="pill" id="data-count">0개</span>
+    </div>
+    <ul class="payloads" id="payloads"></ul>
+    <p class="muted small" id="data-empty">웹앱의 결과·행발·창체 화면에서 "나이스로 보내기"를 누른 뒤, 웹앱 탭을 열어 두고 "다시 가져오기"를 누르세요.</p>
+    <p class="muted small" id="data-meta"></p>
+    <div class="btns">
+      <button type="button" class="btn btn-sm" id="btn-reread">웹앱에서 다시 가져오기</button>
+      <button type="button" class="btn btn-sm" id="btn-clear">삭제</button>
+    </div>
+    <p class="msg small" id="data-msg"></p>
+  </section>
+
+  <section class="card" id="card-screen">
+    <div class="eyebrow">NEIS</div>
+    <h2>화면</h2>
+    <div class="screen-name" id="screen-name">확인 중…</div>
+    <p class="muted small" id="screen-status"></p>
+    <p class="muted tiny" id="screen-detail"></p>
+    <label class="field-row small">
+      <span>화면 지정</span>
+      <select id="screen-override" class="field">
+        <option value="">자동 인식</option>
+        <option>교과평가</option>
+        <option>학기말종합의견</option>
+        <option>행동특성</option>
+        <option>자율활동관리</option>
+        <option>동아리활동관리</option>
+        <option>진로활동관리</option>
+      </select>
+    </label>
+    <div class="btns">
+      <button type="button" class="btn btn-sm" id="btn-detect">화면 다시 인식</button>
+      <button type="button" class="btn btn-sm" id="btn-scan">화면 구조 수집 (JSON 내려받기)</button>
+      <button type="button" class="btn btn-sm" id="btn-permit" hidden>이 사이트 권한 허용</button>
+    </div>
+    <p class="msg small" id="screen-msg"></p>
+  </section>
+
+  <section class="card" id="card-fill">
+    <div class="eyebrow">FILL</div>
+    <h2>입력</h2>
+    <label class="field-row small">
+      <span>데이터</span>
+      <select id="fill-payload" class="field"></select>
+    </label>
+    <label class="check small" id="club-row" hidden><input type="checkbox" id="fill-club"> 동아리 문장도 같은 칸의 동아리 구간에 이어쓰기</label>
+    <p class="muted small" id="fill-hint"></p>
+    <div class="seg" role="radiogroup" aria-label="입력 방식">
+      <label class="seg-item"><input type="radio" name="mode" value="empty" checked><span>빈 칸만</span></label>
+      <label class="seg-item"><input type="radio" name="mode" value="overwrite"><span>덮어쓰기</span></label>
+      <label class="seg-item" id="mode-append-item"><input type="radio" name="mode" value="append"><span>이어쓰기 (1학기 내용 뒤에)</span></label>
+    </div>
+    <div id="joiner-row" hidden>
+      <label class="field-row small">
+        <span>이음</span>
+        <select id="fill-joiner" class="field">
+          <option value="none">바로 이어서 (공백 없음)</option>
+          <option value="space" selected>띄어쓰기 한 칸</option>
+          <option value="nl1">줄바꿈 한 번</option>
+          <option value="nl2">줄바꿈 두 번</option>
+          <option value="custom">직접 입력</option>
+        </select>
+      </label>
+      <label class="field-row small" id="joiner-custom-row" hidden>
+        <span>이음 글자</span>
+        <textarea id="joiner-custom" class="field" rows="2" maxlength="10" placeholder="10자까지 (Enter = 줄바꿈)"></textarea>
+      </label>
+    </div>
+    <label class="check small"><input type="checkbox" id="fill-save" checked> 입력 후 저장 누르기</label>
+    <button type="button" class="btn-accent big" id="btn-fill">자동 입력 ▶</button>
+    <p class="msg small" id="fill-msg"></p>
+    <div class="btns">
+      <button type="button" class="btn btn-sm" id="btn-preview">미리보기(저장 안 함)</button>
+      <button type="button" class="btn btn-sm" id="btn-inspect">인식 검사</button>
+      <button type="button" class="btn btn-sm" id="btn-stop" disabled>중지</button>
+    </div>
+    <div class="progress" id="progress" hidden>
+      <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+      <div class="small" id="progress-text"></div>
+    </div>
+    <div class="log small" id="log"></div>
+    <p class="muted small">입력 중에 나이스 화면에서 아무 키나 누르면 멈춥니다. 저장 전에는 화면에서 결과를 꼭 확인하세요.</p>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>

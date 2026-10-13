@@ -10,6 +10,7 @@ import GradesPage from './pages/GradesPage'
 import ResultsPage from './pages/ResultsPage'
 import BehaviorPage from './pages/BehaviorPage'
 import CreativePage from './pages/CreativePage'
+import CollectPage from './pages/CollectPage'
 import NeisPage from './pages/NeisPage'
 import GuidePage from './pages/GuidePage'
 
@@ -26,6 +27,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/behavior" element={<BehaviorPage />} />
           <Route path="/creative" element={<CreativePage />} />
+          <Route path="/collect" element={<CollectPage />} />
           <Route path="/neis" element={<NeisPage />} />
           <Route path="/guide" element={<GuidePage />} />
           <Route path="*" element={<Navigate to="/plan" replace />} />

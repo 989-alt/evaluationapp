@@ -6,13 +6,19 @@ import type {
 } from '@/lib/types'
 import { repairPlan } from '@/lib/plan'
 
-/** 크롬 확장(2차)이 읽는 나이스 입력 데이터. API 키가 든 저장소 본체 대신 이 키만 읽게 합니다 */
+/** 크롬 확장(extension/)이 읽는 나이스 입력 데이터. API 키가 든 저장소 본체 대신 이 키만 읽게 합니다 */
 export const NEIS_STORAGE_KEY = 'saenggibu-neis'
 function mirrorNeis(payloads: NeisPayload[]) {
   try {
     localStorage.setItem(NEIS_STORAGE_KEY, JSON.stringify({ version: 1, payloads }))
   } catch {
     // 저장 공간이 없거나 막힌 경우 무시
+  }
+  // 같은 탭의 확장(app-bridge.js)이 바로 받아 가도록 알립니다. 같은 출처에만 보냅니다
+  try {
+    window.postMessage({ type: 'saenggibu-neis', payloads }, location.origin)
+  } catch {
+    // 무시
   }
 }
 
@@ -69,6 +75,13 @@ interface State {
   // NEIS handoff
   neisPayloads: NeisPayload[]
   setNeisPayloads: (p: NeisPayload[]) => void
+  /** 지정한 종류의 기존 데이터를 지우고 새 데이터를 뒤에 붙입니다 */
+  stageNeisPayloads: (kinds: NeisPayload['kind'][], payloads: NeisPayload[]) => void
+
+  /** 개인정보 검사에서 "보내도 괜찮음"으로 확인한 표현(piiKey → 확인 시각) */
+  piiConfirmed: Record<string, number>
+  confirmPII: (keys: string[]) => void
+  unconfirmPII: (keys: string[]) => void
 
   resetAll: () => void
 }
@@ -81,9 +94,9 @@ const defaultSettings: Settings = {
   ending: '함',
   sentencesPerStandard: 1,
   behaviorBytes: 700,
-  subjectBytes: 700,
   persistResults: true,
   guideSeen: false,
+  paidKeyConfirmed: false,
 }
 
 export const useStore = create<State>()(
@@ -172,6 +185,23 @@ export const useStore = create<State>()(
 
       neisPayloads: [],
       setNeisPayloads: (neisPayloads) => set({ neisPayloads }),
+      stageNeisPayloads: (kinds, payloads) =>
+        set((s) => ({ neisPayloads: [...s.neisPayloads.filter((p) => !kinds.includes(p.kind)), ...payloads] })),
+
+      piiConfirmed: {},
+      confirmPII: (keys) =>
+        set((s) => {
+          const now = Date.now()
+          const next = { ...s.piiConfirmed }
+          for (const k of keys) next[k] = now
+          return { piiConfirmed: next }
+        }),
+      unconfirmPII: (keys) =>
+        set((s) => {
+          const next = { ...s.piiConfirmed }
+          for (const k of keys) delete next[k]
+          return { piiConfirmed: next }
+        }),
 
       resetAll: () => {
         localStorage.removeItem('saenggibu-v2')

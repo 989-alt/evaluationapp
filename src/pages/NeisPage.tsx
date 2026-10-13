@@ -97,8 +97,9 @@ export default function NeisPage() {
         </div>
         {payloads.length === 0 ? (
           <div className="rounded-[14px] bg-surface-2 px-5 py-8 text-center">
-            <p className="m-0 mb-3 text-ink-2">아직 보낼 데이터가 없습니다 — 결과 페이지에서 '나이스로 보내기'를 누르면 여기 쌓입니다</p>
+            <p className="m-0 mb-3 text-ink-2">아직 보낼 데이터가 없습니다 — 모아보기나 결과 페이지에서 '나이스로 보내기'를 누르면 여기 쌓입니다</p>
             <div className="flex justify-center gap-2">
+              <Link to="/collect" className="btn-primary !px-4 !py-1.5 text-[13px]">모아보기로</Link>
               <Link to="/results" className="btn btn-sm">교과 결과로</Link>
               <Link to="/behavior" className="btn btn-sm">행동특성으로</Link>
             </div>
@@ -138,13 +139,19 @@ export default function NeisPage() {
 
       <Card className="p-6">
         <div className="eyebrow mb-1">INSTALL</div>
-        <h2 className="m-0 mb-4 text-[18px] font-bold">크롬 확장 설치 (준비 중)</h2>
+        <h2 className="m-0 mb-4 text-[18px] font-bold">크롬 확장 설치</h2>
         <ol className="m-0 p-0 list-none flex flex-col gap-3">
           <li className="flex gap-3 items-start">
             <span className="shrink-0 w-6 h-6 rounded-full bg-accent text-white text-[12px] font-bold flex items-center justify-center">1</span>
             <div className="flex flex-wrap items-center gap-3">
-              <span>크롬 웹스토어에서 "AI 생기부 보조 생성기 → 나이스" 설치</span>
-              <button type="button" className="btn btn-sm" disabled>웹스토어 열기 (출시 전)</button>
+              <span>
+                <a className="underline font-bold" href="https://github.com/989-alt/evaluationapp" target="_blank" rel="noreferrer">
+                  저장소
+                </a>
+                를 ZIP으로 내려받아(Code → Download ZIP) 압축을 푼 뒤, chrome://extensions → 개발자 모드 → 압축해제된 확장 프로그램 로드에서{' '}
+                <code>extension</code> 폴더를 선택
+              </span>
+              <button type="button" className="btn btn-sm" disabled>웹스토어 (심사 준비 중)</button>
             </div>
           </li>
           <li className="flex gap-3 items-start"><span className="shrink-0 w-6 h-6 rounded-full bg-accent text-white text-[12px] font-bold flex items-center justify-center">2</span><span>나이스 로그인 후 해당 화면 조회</span></li>

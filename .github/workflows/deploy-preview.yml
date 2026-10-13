@@ -1,0 +1,55 @@
+name: Deploy preview branch to GitHub Pages
+
+# main 빌드는 사이트 루트에, 이 branch 빌드는 /preview/ 아래에 함께 올립니다.
+# main이 다시 배포되면 /preview/는 사라지므로, 그때는 이 워크플로를 다시 실행하면 됩니다.
+on:
+  push:
+    branches: ['claude/quirky-cray-hexyay']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main (site root)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
+      - name: Checkout preview branch
+        uses: actions/checkout@v4
+        with:
+          path: preview
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build main
+        working-directory: main
+        run: npm ci && npm run build
+      - name: Build preview
+        working-directory: preview
+        run: npm ci && npm run build
+      - name: Assemble site
+        run: |
+          mkdir -p site
+          cp -r main/dist/. site/
+          mkdir -p site/preview
+          cp -r preview/dist/. site/preview/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

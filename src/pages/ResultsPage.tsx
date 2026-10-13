@@ -4,9 +4,11 @@ import { Alert, Card, CopyText, IssueList, LevelPill, PageHeader, Progress, Spin
 import { useActivePlan, useClient, useStore } from '@/store'
 import { abortGeneration, buildStudentInput, generateStudents, genState, useGenState } from '@/llm/generateModeB'
 import { validateComment, hasErrors, type Issue } from '@/lib/validate'
-import { downloadXlsx } from '@/lib/excel'
+import { downloadXlsx, uniqueSheetName } from '@/lib/excel'
 import { buildSubjectPayloads, neisByteLimit } from '@/lib/neis'
 import { flatten, hash, neisBytes, splitSentences } from '@/lib/text'
+import { ModeSwitch } from './CommentsPage'
+import { PIIGate, standardItems, usePIIGate } from '@/components/PIIGate'
 import { LEVEL_SHORT, type Standard, type StudentResult, type SubjectComment } from '@/lib/types'
 
 type View = 'student' | 'subject'
@@ -37,14 +39,6 @@ function sentencesOf(r: StudentResult | undefined, fallback: 1 | 2): 1 | 2 {
   return s / k >= 2 ? 2 : 1 // 내림: 2문장 이상일 때만 2
 }
 
-function sheetName(name: string, used: Set<string>) {
-  const base = name.replace(/[:\\/?*[\]]/g, ' ').trim().slice(0, 28).replace(/^'+|'+$/g, '').trim() || '교과'
-  let n = base
-  for (let i = 2; used.has(n); i++) n = `${base} ${i}`
-  used.add(n)
-  return n
-}
-
 function StandardList({ sc, stdById }: { sc: SubjectComment; stdById: Map<string, Standard> }) {
   return (
     <ul className="m-0 p-0 list-none flex flex-col gap-1.5">
@@ -72,7 +66,7 @@ export default function ResultsPage() {
   const N = useStore((s) => s.studentCount)
   const results = useStore((s) => s.results)
   const updateSubjectText = useStore((s) => s.updateSubjectText)
-  const setNeisPayloads = useStore((s) => s.setNeisPayloads)
+  const stageNeisPayloads = useStore((s) => s.stageNeisPayloads)
   const clearResults = useStore((s) => s.clearResults)
 
   const [view, setView] = useState<View>('student')
@@ -135,6 +129,14 @@ export default function ResultsPage() {
 
   const curSubj = subj && subjects.includes(subj) ? subj : (subjects[0] ?? null)
 
+  // 개인정보 검사: 다시 생성할 때 보내는 성취기준(성적이 입력된 것)
+  const grades = useStore((s) => s.grades)
+  const piiItems = useMemo(() => {
+    const used = new Set(Object.values(grades).flatMap((row) => Object.keys(row ?? {})))
+    return standardItems((plan?.standards ?? []).filter((s) => used.has(s.id)))
+  }, [plan, grades])
+  const gate = usePIIGate(piiItems)
+
   // 학생 칩 → 학생별 보기에서 해당 카드로 스크롤
   useEffect(() => {
     if (pendingScroll.current === null || view !== 'student') return
@@ -155,6 +157,10 @@ export default function ResultsPage() {
     const st = useStore.getState()
     if (!buildStudentInput(plan, st.grades, n).length) return toast(`${n}번은 입력된 성취 수준이 없습니다`)
     if (genState.getSnapshot().running) return toast('이미 평어를 생성하고 있습니다. 끝난 뒤 다시 시도하세요.')
+    if (!gate.ok) {
+      document.getElementById('pii-gate')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return toast('개인정보로 보이는 표현을 먼저 확인해 주세요')
+    }
     const prev = st.results.find((r) => r.student === n)
     if (prev?.subjects.some((sc) => sc.edited) && !confirm(`${n}번에는 직접 수정한 문단이 있습니다. 다시 생성하면 수정한 내용이 바뀝니다. 계속할까요?`)) return
     if (editing?.student === n) setEditing(null)
@@ -218,7 +224,7 @@ export default function ResultsPage() {
         if (!sc || !sc.text.trim()) continue
         rows.push({ 번호: r.student, 수준: levelText(sc), 평어: sc.text, Bytes: neisBytes(sc.text) })
       }
-      if (rows.length) sheets.push({ name: sheetName(subject, used), rows })
+      if (rows.length) sheets.push({ name: uniqueSheetName(subject, used, '교과'), rows })
     }
     const byStudent = okResults.map((r) => {
       const row: Record<string, string | number> = { 번호: r.student }
@@ -246,7 +252,7 @@ export default function ResultsPage() {
     if (errResults.length) notes.push(`생성 오류 ${errResults.length}명은 제외됩니다.`)
     if (errorParas) notes.push(`검사 오류(이름·허용되지 않는 문자 등)가 있는 문단 ${errorParas}개가 함께 담깁니다.`)
     if (notes.length && !confirm(`${notes.join('\n')}\n그대로 나이스 입력 목록에 담을까요?`)) return
-    setNeisPayloads([...st.neisPayloads.filter((p) => p.kind !== 'subject'), ...payloads])
+    stageNeisPayloads(['subject'], payloads)
     navigate('/neis')
   }
 
@@ -255,11 +261,14 @@ export default function ResultsPage() {
       eyebrow="STEP 3 · 결과 · 방식 B"
       title={<>검사를 통과한 문장만<br />나이스로 보냅니다</>}
       aside={
-        <div className="flex gap-7">
-          <Stat label="학생" value={okResults.length} of={Math.max(N, okResults.length)} />
-          <Stat label="교과 문단" value={paragraphs.length} />
-          <Stat label="검사 통과" value={passCount} cls="text-lv0-ink" />
-          <Stat label="확인 필요" value={needCount} cls="text-lv2-ink" />
+        <div className="flex flex-col items-end gap-5">
+          <ModeSwitch mode="R" />
+          <div className="flex gap-7">
+            <Stat label="학생" value={okResults.length} of={Math.max(N, okResults.length)} />
+            <Stat label="교과 문단" value={paragraphs.length} />
+            <Stat label="검사 통과" value={passCount} cls="text-lv0-ink" />
+            <Stat label="확인 필요" value={needCount} cls="text-lv2-ink" />
+          </div>
         </div>
       }
     />
@@ -369,6 +378,7 @@ export default function ResultsPage() {
     <>
       {header}
       {progressCard}
+      {plan && <PIIGate gate={gate} what="다시 생성" />}
       {!plan && <Alert kind="warn">활성 평가계획이 없어 다시 생성은 할 수 없습니다. 성취기준 코드는 저장된 평가계획에서 찾아 표시합니다. <Link to="/plan" className="underline font-bold">평가계획</Link></Alert>}
       {errResults.length > 0 && !gen.running && (
         <Alert kind="error">

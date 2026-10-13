@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Alert, Card, CopyText, IssueList, PageHeader, Progress, Spinner, Stat, toast } from '@/components/ui'
+import { PIIGate, usePIIGate } from '@/components/PIIGate'
 import { useClient, useStore } from '@/store'
 import { asArray, generateJSON } from '@/llm/provider'
 import { behaviorExpandPrompt, behaviorPrompt, SYSTEM_TEACHER } from '@/llm/prompts'
 import { downloadXlsx } from '@/lib/excel'
 import { hasErrors, validateComment, type Issue } from '@/lib/validate'
-import { BEHAVIOR_EXTRA_BYTES } from '@/lib/neis'
+import { BEHAVIOR_EXTRA_BYTES, buildBehaviorPayload } from '@/lib/neis'
 import { flatten, hash, neisBytes, sleep } from '@/lib/text'
-import type { BehaviorResult, BehaviorStudent, NeisPayload } from '@/lib/types'
+import type { BehaviorResult, BehaviorStudent } from '@/lib/types'
 
 const CATEGORIES: Array<{ key: string; label: string; traits: string[] }> = [
   { key: 'study', label: '학습', traits: ['학습(우수)', '학습(발전가능)', '학습(제안)'] },
@@ -43,7 +44,7 @@ export default function BehaviorPage() {
   const setStudents = useStore((s) => s.setBehaviorStudents)
   const results = useStore((s) => s.behaviorResults)
   const setResults = useStore((s) => s.setBehaviorResults)
-  const setNeisPayloads = useStore((s) => s.setNeisPayloads)
+  const stageNeisPayloads = useStore((s) => s.stageNeisPayloads)
 
   const target = settings.behaviorBytes
   const maxBytes = target + MAX_EXTRA
@@ -74,6 +75,9 @@ export default function BehaviorPage() {
   const N = students.length
   const ids = useMemo(() => Array.from({ length: N }, (_, i) => i + 1), [N])
   const entered = useMemo(() => students.filter((s) => Object.keys(s.checks).length > 0), [students])
+  // 개인정보 검사: AI로 보내는 특성 이름(예전 데이터·직접 추가한 특성 포함). 번호는 보내도 되는 정보입니다
+  const traitNames = useMemo(() => [...new Set(students.flatMap((s) => Object.keys(s.checks)))], [students])
+  const gate = usePIIGate(traitNames.map((t) => ({ label: `행발 특성 "${t}"`, text: promptName(t) })))
 
   // ---------- 입력 ----------
   const setCount = (n: number) => {
@@ -147,6 +151,7 @@ export default function BehaviorPage() {
     if (running || regen !== null) return
     if (!client) return setError('설정에서 API 키와 모델을 먼저 선택하세요.')
     if (!targets.length) return setError('특성을 고른 학생이 없습니다. 학생 카드에서 특성을 클릭해 고르세요.')
+    if (!gate.ok) return setError('개인정보로 보이는 표현을 먼저 확인해 주세요.')
     const have = new Set(results.map((r) => r.student))
     const overwrite = targets.filter((s) => have.has(s.id)).length
     if (overwrite && !confirm(`이미 결과가 있는 ${overwrite}명은 새 문장으로 바뀝니다(직접 수정한 내용 포함). 계속할까요?`)) return
@@ -261,6 +266,7 @@ export default function BehaviorPage() {
   const regenerate = async (n: number) => {
     if (running || regen !== null) return toast('이미 생성하고 있습니다. 끝난 뒤 다시 시도하세요.')
     if (!client) return toast('설정에서 API 키와 모델을 먼저 선택하세요')
+    if (!gate.ok) return toast('개인정보로 보이는 표현을 먼저 확인해 주세요')
     const s = useStore.getState().behaviorStudents.find((x) => x.id === n)
     if (!s || !Object.keys(s.checks).length) return toast(`${n}번은 고른 특성이 없어 다시 생성할 수 없습니다`)
     if (editing?.student === n) setEditing(null)
@@ -315,16 +321,14 @@ export default function BehaviorPage() {
     )
   }
   const sendNeis = () => {
-    const rows = shown.filter((r) => r.text.trim()).map((r) => ({ student: r.student, text: r.text.trim() }))
-    if (!rows.length) return toast('나이스로 보낼 문장이 없습니다')
+    const payload = buildBehaviorPayload(shown)
+    if (!payload) return toast('나이스로 보낼 문장이 없습니다')
     const errs = shown.filter((r) => hasErrors(issuesOf(r.student))).length
     const notes: string[] = []
     if (running) notes.push('아직 생성 중입니다. 지금까지 끝난 학생만 담습니다.')
     if (errs) notes.push(`검사 오류(바이트 초과·허용되지 않는 문자 등)가 있는 ${errs}명이 함께 담깁니다.`)
     if (notes.length && !confirm(`${notes.join('\n')}\n그대로 나이스 입력 목록에 담을까요?`)) return
-    const payload: NeisPayload = { version: 1, createdAt: Date.now(), kind: 'behavior', rows }
-    const st = useStore.getState()
-    setNeisPayloads([...st.neisPayloads.filter((p) => p.kind !== 'behavior'), payload])
+    stageNeisPayloads(['behavior'], [payload])
     navigate('/neis')
   }
 
@@ -490,6 +494,8 @@ export default function BehaviorPage() {
         })}
       </div>
 
+      <PIIGate gate={gate} what="행발 생성" />
+
       {/* 하단 고정 바 */}
       <div className="sticky bottom-4 z-20 bg-ink text-white rounded-[20px] px-6 py-4 flex flex-wrap items-center gap-x-5 gap-y-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)]">
         {running ? (
@@ -506,15 +512,16 @@ export default function BehaviorPage() {
             <div className="flex-1 min-w-[220px]">
               <div className="font-bold">생성 준비</div>
               <div className="text-[12px] text-white/60">특성을 고른 학생만 · {BATCH}명씩 묶어 요청 · 번호와 특성만 전송 · 목표 {target}바이트</div>
+              {!gate.ok && <div className="text-[12px] mt-1"><mark className="pii">확인 필요</mark> 위 카드에서 개인정보로 보이는 표현을 확인하면 생성할 수 있습니다</div>}
               {error && <div className="text-[12px] text-accent mt-1">{error} {!client && <Link to="/settings" className="underline">설정으로 가기</Link>}</div>}
               {!client && !error && <div className="text-[12px] text-accent mt-1">API 키와 모델이 필요합니다. <Link to="/settings" className="underline">설정으로 가기</Link></div>}
             </div>
             {entered.length > 0 && missingEntered.length > 0 && missingEntered.length < entered.length && (
-              <button type="button" className="btn !bg-transparent !text-white !border-white/30 hover:!border-white" disabled={busy} onClick={() => start(missingEntered)}>
+              <button type="button" className="btn !bg-transparent !text-white !border-white/30 hover:!border-white" disabled={busy || !gate.ok} onClick={() => start(missingEntered)}>
                 결과 없는 {missingEntered.length}명만 생성
               </button>
             )}
-            <button type="button" className="btn-accent" disabled={busy || !entered.length} onClick={() => start(entered)}>
+            <button type="button" className="btn-accent" disabled={busy || !entered.length || !gate.ok} onClick={() => start(entered)}>
               {regen !== null ? <><Spinner /> {regen}번 생성 중</> : <>특성을 고른 {entered.length}명 생성</>}
             </button>
           </>

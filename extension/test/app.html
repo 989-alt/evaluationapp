@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>웹앱 모의 페이지 (bridge 테스트)</title>
+<script>
+  // 웹앱(src/store/index.ts mirrorNeis)이 하는 일을 흉내 냅니다.
+  // 확장은 'saenggibu-neis'만 읽어야 하고, API 키가 든 'saenggibu-v2'는 읽으면 안 됩니다.
+  localStorage.setItem('saenggibu-v2', JSON.stringify({ state: { settings: { apiKey: 'SECRET-API-KEY-DO-NOT-READ' } } }))
+  const subject = {
+    version: 1, createdAt: 1760000000000, kind: 'subject', subject: '국어',
+    rows: [1, 2, 3].map((s) => ({
+      student: s,
+      text: `국어 평어 ${s}번 학생 문장임.`,
+      standards: [
+        { code: '[6국05-01]', level: '잘함', criterion: `인물의 삶을 이해함 ${s}` },
+        { code: '[6국05-02]', level: '매우잘함', criterion: `작품을 감상함 ${s}` },
+      ],
+    })),
+    junk: 'should be stripped',
+  }
+  window.__seed = { version: 1, payloads: [subject] }
+  localStorage.setItem('saenggibu-neis', JSON.stringify(window.__seed))
+</script>
+</head>
+<body><p>bridge test</p></body>
+</html>
