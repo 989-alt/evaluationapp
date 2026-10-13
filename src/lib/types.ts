@@ -102,7 +102,12 @@ export interface BehaviorResult {
 export interface CreativeInput {
   text: string
   count: number
+  /** 자율 / 동아리 / 진로 / 기타 */
+  area?: string
 }
+
+/** 영역 -> 학생 번호 -> 배정한 문장 */
+export type CreativeAssign = Record<string, Record<number, string>>
 
 export interface CreativeResult {
   original: string

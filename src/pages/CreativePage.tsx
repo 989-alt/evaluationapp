@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Alert, Card, CopyText, IssueList, PageHeader, Spinner, toast } from '@/components/ui'
 import { useActivePlan, useClient, useStore } from '@/store'
 import { asArray, generateJSON } from '@/llm/provider'
 import { creativePrompt, SYSTEM_TEACHER } from '@/llm/prompts'
 import { downloadXlsx } from '@/lib/excel'
-import { validateComment } from '@/lib/validate'
+import { hasErrors, validateComment } from '@/lib/validate'
 import { neisByteLimit } from '@/lib/neis'
 import { flatten, hash, neisBytes } from '@/lib/text'
-import type { CreativeInput, CreativeResult } from '@/lib/types'
+import type { CreativeInput, CreativeResult, NeisPayload } from '@/lib/types'
 
 const CREATIVE_LIMIT = neisByteLimit('creative', 0)
+const BASE_AREAS = ['자율', '동아리', '진로'] as const
+const AREA_OPTIONS = [...BASE_AREAS, '기타']
+const EXPLAIN = '확장 프로그램이 자율·진로는 학생부자료기록 · 진로활동관리에, 동아리는 동아리활동관리에 문장을 채웁니다(날짜 선택 없음).'
+/** 평가계획의 영역 이름을 자율/동아리/진로/기타 중 하나로 */
+const tagOf = (name?: string) => (!name ? '자율' : name.includes('동아리') ? '동아리' : name.includes('진로') ? '진로' : /자율|자치/.test(name) ? '자율' : '기타')
 const clampCount = (n: number) => Math.max(1, Math.min(20, Math.round(n) || 1))
 
 function parseResults(out: unknown): Array<{ original: string; variations: string[] }> {
@@ -27,6 +32,15 @@ export default function CreativePage() {
   const inputs = useStore((s) => s.creativeInputs)
   const setInputs = useStore((s) => s.setCreativeInputs)
   const results = useStore((s) => s.creativeResults)
+  const navigate = useNavigate()
+  const studentCount = useStore((s) => s.studentCount)
+  const setStudentCount = useStore((s) => s.setStudentCount)
+  const assign = useStore((s) => s.creativeAssign)
+  const setAssign = useStore((s) => s.setCreativeAssign)
+  const setAssignBulk = useStore((s) => s.setCreativeAssignBulk)
+  const clearAssign = useStore((s) => s.clearCreativeAssign)
+  const setNeisPayloads = useStore((s) => s.setNeisPayloads)
+  const [tab, setTab] = useState<string>('자율')
   const setResults = useStore((s) => s.setCreativeResults)
 
   const [area, setArea] = useState<string | null>(null)
@@ -46,8 +60,8 @@ export default function CreativePage() {
   const curArea = areas.find((a) => a.area === area) ?? areas[0] ?? null
 
   const patch = (i: number, p: Partial<CreativeInput>) => setInputs(inputs.map((x, k) => (k === i ? { ...x, ...p } : x)))
-  const remove = (i: number) => setInputs(inputs.length > 1 ? inputs.filter((_, k) => k !== i) : [{ text: '', count: inputs[0]?.count ?? 3 }])
-  const add = () => setInputs([...inputs, { text: '', count: inputs[inputs.length - 1]?.count ?? 3 }])
+  const remove = (i: number) => setInputs(inputs.length > 1 ? inputs.filter((_, k) => k !== i) : [{ text: '', count: inputs[0]?.count ?? 3, area: inputs[0]?.area }])
+  const add = () => setInputs([...inputs, { text: '', count: inputs[inputs.length - 1]?.count ?? 3, area: tagOf(curArea?.area) }])
 
   const filled = inputs.map((x) => ({ text: flatten(x.text), count: clampCount(x.count) })).filter((x) => x.text)
   const totalWanted = filled.reduce((a, x) => a + x.count, 0)
@@ -99,6 +113,52 @@ export default function CreativePage() {
 
   const variationCount = results.reduce((a, r) => a + r.variations.length, 0)
 
+  // ---- 학생 배정 ----
+  const areaOfResult = (r: CreativeResult) => inputs.find((x) => flatten(x.text) === r.original)?.area ?? '자율'
+  const poolOf = (a: string) => Array.from(new Set(results.filter((r) => areaOfResult(r) === a).flatMap((r) => r.variations)))
+  const tabs = [...BASE_AREAS, ...Array.from(new Set([...inputs.map((x) => x.area ?? '자율'), ...Object.keys(assign)])).filter((a) => !(BASE_AREAS as readonly string[]).includes(a))] as string[]
+  const students = Array.from({ length: studentCount }, (_, i) => i + 1)
+  const cur = tabs.includes(tab) ? tab : '자율'
+  const pool = poolOf(cur)
+  const curAssign = assign[cur] ?? {}
+  const textOf = (a: string, n: number) => (assign[a]?.[n] ?? '')
+  const filledCount = (a: string) => students.filter((n) => flatten(textOf(a, n))).length
+  const isEdited = (t: string) => !!t && !pool.includes(t)
+
+  const autoAssign = (redo: boolean) => {
+    if (!pool.length) return toast(`${cur} 영역으로 지정된 변형 문장이 없습니다`)
+    if (redo && !confirm(`${cur} 영역의 배정을 모두 새로 정합니다(직접 수정한 문장 포함). 계속할까요?`)) return
+    const offset = Math.floor(Math.random() * pool.length)
+    const entries: Array<[number, string]> = []
+    for (const n of students) {
+      const t = curAssign[n] ?? ''
+      if (!redo && t && isEdited(t)) continue // 직접 수정한 칸은 보존
+      entries.push([n, pool[(offset + n - 1) % pool.length]])
+    }
+    setAssignBulk(cur, entries)
+    toast(pool.length < studentCount ? `문장 ${pool.length}개를 ${studentCount}명에게 돌려 배정했습니다(같은 문장이 반복됩니다)` : '배정했습니다')
+  }
+
+  const countsLabel = [...BASE_AREAS, ...tabs.filter((a) => !(BASE_AREAS as readonly string[]).includes(a) && filledCount(a) > 0)]
+    .map((a) => `${a} ${filledCount(a)}명`).join(' · ')
+  const totalAssigned = tabs.reduce((a, t) => a + filledCount(t), 0)
+  const sendNeis = () => {
+    const createdAt = Date.now()
+    const payloads: NeisPayload[] = []
+    let errs = 0
+    for (const a of tabs) {
+      const rows = students.map((n) => ({ student: n, text: flatten(textOf(a, n)) })).filter((r) => r.text)
+      if (!rows.length) continue
+      rows.forEach((r, i) => { if (hasErrors(validateComment(r.text, { others: rows.filter((_, j) => j !== i).map((x) => x.text) }))) errs++ })
+      payloads.push({ version: 1, createdAt, kind: 'creative', subject: a, rows })
+    }
+    if (!payloads.length) return toast('나이스로 보낼 배정이 없습니다')
+    if (errs && !confirm(`검사 오류(허용되지 않는 문자·이름 의심 등)가 있는 ${errs}명이 함께 담깁니다.\n그대로 나이스 입력 목록에 담을까요?`)) return
+    const st = useStore.getState()
+    setNeisPayloads([...st.neisPayloads.filter((p) => p.kind !== 'creative'), ...payloads])
+    navigate('/neis')
+  }
+
   return (
     <>
       <PageHeader eyebrow="창의적 체험활동" title={<>우리 반 활동 문장을 적으면<br />비슷한 문장을 여러 개 만듭니다</>} />
@@ -120,6 +180,12 @@ export default function CreativePage() {
                 className="field flex-1 resize-y leading-[1.6]"
                 aria-label={`원문 문장 ${i + 1}`}
               />
+              <label className="flex items-center gap-1.5 pt-2.5 text-[13px] text-ink-2 whitespace-nowrap">
+                영역
+                <select value={x.area ?? '자율'} onChange={(e) => patch(i, { area: e.target.value })} className="field !w-auto !py-1.5 text-[13px]" aria-label={`원문 문장 ${i + 1} 영역`}>
+                  {AREA_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </label>
               <label className="flex items-center gap-1.5 pt-2.5 text-[13px] text-ink-2 whitespace-nowrap">
                 개수
                 <input
@@ -175,9 +241,6 @@ export default function CreativePage() {
             <button type="button" className="btn btn-sm" onClick={() => { if (confirm('생성된 문장을 모두 지울까요?')) setResults([]) }} disabled={running}>결과 지우기</button>
             <button type="button" className="btn-primary" onClick={exportExcel}>Excel (.xlsx)</button>
           </Card>
-          <Alert kind="info">
-            어떤 학생에게 어떤 문장을 쓸지는 선생님이 직접 정합니다. 마음에 드는 문장을 클릭해 복사한 뒤 나이스 학생부 화면에 붙여 넣으세요. 이 앱은 학생 배정이나 나이스 자동 입력을 하지 않습니다.
-          </Alert>
           {results.map((r, i) => (
             <Card key={i} className="overflow-hidden">
               <div className="px-6 py-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -203,10 +266,77 @@ export default function CreativePage() {
         </>
       )}
 
-      {!results.length && (
-        <Alert kind="info">
-          생성된 문장은 선생님이 학생별로 직접 골라 나이스에 붙여 넣습니다. 이 화면에서는 학생 배정이나 나이스 보내기를 하지 않습니다.
-        </Alert>
+      {!results.length && !totalAssigned && <Alert kind="info">생성한 문장을 학생에게 배정해 나이스로 보낼 수 있습니다. {EXPLAIN}</Alert>}
+
+      {(results.length > 0 || totalAssigned > 0) && (
+        <Card className="px-6 py-6 flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <h2 className="m-0 text-[17px] font-bold flex-1">학생 배정 · 나이스로 보내기</h2>
+            <label className="flex items-center gap-1.5 text-[13px] text-ink-2">
+              학생 수
+              <input type="number" min={1} max={60} value={studentCount} onChange={(e) => setStudentCount(Number(e.target.value) || 1)} className="field !w-16 !py-1.5 text-right" />
+            </label>
+          </div>
+          <p className="m-0 text-[13px] text-muted">{EXPLAIN}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {tabs.map((a) => {
+              const on = a === cur
+              return (
+                <button key={a} type="button" onClick={() => setTab(a)} className={`rounded-full px-3.5 py-1.5 text-[13px] cursor-pointer transition ${on ? 'bg-ink text-white font-bold' : 'bg-surface-2 hover:bg-ground'}`}>
+                  {a} <span className="tabular-nums opacity-70">{filledCount(a)}</span>
+                </button>
+              )
+            })}
+            <span className="flex-1" />
+            <span className="text-[12px] text-muted">{cur} 변형 문장 {pool.length}개 · 배정 {filledCount(cur)} / {studentCount}명</span>
+            <button type="button" className="btn btn-sm" onClick={() => autoAssign(false)} disabled={!pool.length}>자동 배정</button>
+            {filledCount(cur) > 0 && <button type="button" className="btn btn-sm" onClick={() => autoAssign(true)} disabled={!pool.length}>다시 배정</button>}
+            <button type="button" className="btn btn-sm" disabled={!filledCount(cur)} onClick={() => { if (confirm(`${cur} 영역의 배정을 모두 비울까요?`)) clearAssign(cur) }}>모두 비우기</button>
+          </div>
+          {!pool.length && <Alert kind="warn">{cur} 영역으로 지정된 변형 문장이 없습니다. 원문의 영역을 바꾸고 다시 생성하거나, 아래 칸에 직접 입력하세요.</Alert>}
+          <div className="flex flex-col">
+            {students.map((n) => {
+              const t = curAssign[n] ?? ''
+              const others = students.filter((m) => m !== n).map((m) => flatten(textOf(cur, m))).filter(Boolean)
+              const issues = t.trim() ? validateComment(t, { others }) : []
+              return (
+                <div key={n} className="grid grid-cols-[40px_1fr] md:grid-cols-[40px_minmax(0,260px)_1fr_150px_56px] gap-x-3 gap-y-1.5 items-start py-2.5 border-t border-line first:border-t-0">
+                  <span className="pt-2 text-right text-[13px] font-bold tabular-nums">{n}번</span>
+                  <select
+                    value={pool.includes(t) ? t : ''}
+                    onChange={(e) => setAssign(cur, n, e.target.value)}
+                    className="field !py-1.5 text-[13px] min-w-0"
+                    aria-label={`${n}번 문장 선택`}
+                  >
+                    <option value="">{isEdited(t) ? '직접 수정한 문장' : '문장 선택'}</option>
+                    {pool.map((v, k) => <option key={k} value={v}>{k + 1}. {v.length > 36 ? `${v.slice(0, 36)}…` : v}</option>)}
+                  </select>
+                  <textarea
+                    value={t}
+                    onChange={(e) => setAssign(cur, n, e.target.value)}
+                    rows={2}
+                    className="field resize-y leading-[1.6] text-[13px] col-span-2 md:col-span-1"
+                    aria-label={`${n}번 문장`}
+                    placeholder="문장을 고르거나 직접 입력"
+                  />
+                  <div className="flex flex-col gap-0.5 text-[12px] col-span-2 md:col-span-1">
+                    {t.trim() ? (
+                      <>
+                        <span className="text-muted tabular-nums">{neisBytes(flatten(t))} Bytes{isEdited(t) && <b className="ml-1.5 text-ink-2">(수정)</b>}</span>
+                        <IssueList issues={issues} />
+                      </>
+                    ) : <span className="text-muted">비어 있음</span>}
+                  </div>
+                  <button type="button" className="btn btn-sm" disabled={!t} onClick={() => setAssign(cur, n, '')} aria-label={`${n}번 비우기`}>비우기</button>
+                </div>
+              )
+            })}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[13px] text-muted flex-1">다시 보내면 이전에 담은 창체 데이터는 바뀝니다</span>
+            <button type="button" className="btn-primary" onClick={sendNeis} disabled={!totalAssigned}>나이스로 보내기 ({countsLabel})</button>
+          </div>
+        </Card>
       )}
 
       {/* 하단 고정 바 */}

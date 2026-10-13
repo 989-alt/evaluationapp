@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type {
-  BehaviorResult, BehaviorStudent, CreativeInput, CreativeResult, EvalPlan, GradeMap, Level, ModeAResult,
+  BehaviorResult, BehaviorStudent, CreativeAssign, CreativeInput, CreativeResult, EvalPlan, GradeMap, Level, ModeAResult,
   ModelInfo, NeisPayload, Provider, Settings, StudentResult,
 } from '@/lib/types'
 import { repairPlan } from '@/lib/plan'
@@ -56,6 +56,11 @@ interface State {
   setCreativeInputs: (i: CreativeInput[]) => void
   creativeResults: CreativeResult[]
   setCreativeResults: (r: CreativeResult[]) => void
+  /** 영역별 학생 배정 (학생 수는 studentCount 공유) */
+  creativeAssign: CreativeAssign
+  setCreativeAssign: (area: string, student: number, text: string) => void
+  setCreativeAssignBulk: (area: string, entries: Array<[number, string]>) => void
+  clearCreativeAssign: (area: string) => void
 
   // copied markers (not persisted)
   copied: Record<string, true>
@@ -138,6 +143,29 @@ export const useStore = create<State>()(
       setCreativeInputs: (creativeInputs) => set({ creativeInputs }),
       creativeResults: [],
       setCreativeResults: (creativeResults) => set({ creativeResults }),
+      creativeAssign: {},
+      setCreativeAssign: (area, student, text) =>
+        set((s) => {
+          const row = { ...(s.creativeAssign[area] ?? {}) }
+          if (text) row[student] = text
+          else delete row[student]
+          return { creativeAssign: { ...s.creativeAssign, [area]: row } }
+        }),
+      setCreativeAssignBulk: (area, entries) =>
+        set((s) => {
+          const row = { ...(s.creativeAssign[area] ?? {}) }
+          for (const [student, text] of entries) {
+            if (text) row[student] = text
+            else delete row[student]
+          }
+          return { creativeAssign: { ...s.creativeAssign, [area]: row } }
+        }),
+      clearCreativeAssign: (area) =>
+        set((s) => {
+          const next = { ...s.creativeAssign }
+          delete next[area]
+          return { creativeAssign: next }
+        }),
 
       copied: {},
       markCopied: (id) => set((s) => ({ copied: { ...s.copied, [id]: true } })),
@@ -166,7 +194,7 @@ export const useStore = create<State>()(
         const { copied, ...rest } = s
         void copied
         if (!s.settings.persistResults) {
-          return { ...rest, modeAResults: [], results: [], behaviorResults: [], creativeResults: [] } as any
+          return { ...rest, modeAResults: [], results: [], behaviorResults: [], creativeResults: [], creativeAssign: {} } as any
         }
         return rest as any
       },
