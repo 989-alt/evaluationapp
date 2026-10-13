@@ -144,11 +144,11 @@ export default function NeisPage() {
             <span className="shrink-0 w-6 h-6 rounded-full bg-accent text-white text-[12px] font-bold flex items-center justify-center">1</span>
             <div className="flex flex-wrap items-center gap-3">
               <span>
-                저장소의{' '}
-                <a className="underline font-bold" href="https://github.com/989-alt/evaluationapp/tree/main/extension" target="_blank" rel="noreferrer">
-                  <code>extension/</code> 폴더
+                <a className="underline font-bold" href="https://github.com/989-alt/evaluationapp" target="_blank" rel="noreferrer">
+                  저장소
                 </a>
-                를 내려받아 chrome://extensions → 개발자 모드 → 압축해제된 확장 프로그램 로드
+                를 ZIP으로 내려받아(Code → Download ZIP) 압축을 푼 뒤, chrome://extensions → 개발자 모드 → 압축해제된 확장 프로그램 로드에서{' '}
+                <code>extension</code> 폴더를 선택
               </span>
               <button type="button" className="btn btn-sm" disabled>웹스토어 (심사 준비 중)</button>
             </div>

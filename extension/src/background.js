@@ -2,10 +2,19 @@
 // 네트워크 요청은 하지 않습니다.
 'use strict'
 
-const APP_URLS = ['https://989-alt.github.io/*', 'http://localhost/*', 'http://127.0.0.1/*']
-const APP_ORIGIN = /^(https:\/\/989-alt\.github\.io|http:\/\/localhost(:\d+)?|http:\/\/127\.0\.0\.1(:\d+)?)$/
+const APP_URLS = ['https://989-alt.github.io/evaluationapp/*', 'http://localhost/*', 'http://127.0.0.1/*']
+/** 웹앱 주소인지 (GitHub Pages는 /evaluationapp/ 아래만, 개발용 localhost·127.0.0.1은 모든 포트) */
+function isAppUrl(url) {
+  try {
+    const u = new URL(url)
+    if (u.origin === 'https://989-alt.github.io') return u.pathname.startsWith('/evaluationapp/')
+    return u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')
+  } catch {
+    return false
+  }
+}
 const SCAN_MAX_BYTES = 300 * 1024
-const TIMEOUT = { ping: 1500, detect: 12000, scan: 12000, fill: 11 * 60 * 1000, stop: 3000 }
+const TIMEOUT = { ping: 1500, detect: 15000, scan: 15000, fill: 11 * 60 * 1000, stop: 3000 }
 const KINDS = ['subject', 'behavior', 'creative']
 
 // ---------- 데이터 ----------
@@ -119,12 +128,16 @@ async function frameCall(tabId, frameId, cmd, args) {
   }
 }
 
-const screenScore = (d) => (!d || d.error || d.screen === 'unknown' ? 0 : 10 + (d.grids?.length ?? 0) + (d.cpr ? 5 : 0))
+/** 프레임 고르기 점수: 입력할 표가 있으면(ready) 가장 높게, 화면을 몰라도 표 개수로 */
+function screenScore(d) {
+  if (!d || d.error) return 0
+  return (d.ready ? 100 : 0) + (d.screen && d.screen !== 'unknown' ? 10 : 0) + Math.min(9, d.grids?.length ?? 0) + (d.cpr ? 5 : 0) + 1
+}
 
-async function detect(tabId) {
+async function detect(tabId, args) {
   const ok = await ensureContent(tabId)
   const frames = await listFrames(tabId)
-  const results = await Promise.all(frames.map(async (f) => ({ frameId: f.frameId, d: await frameCall(tabId, f.frameId, 'detect') })))
+  const results = await Promise.all(frames.map(async (f) => ({ frameId: f.frameId, d: await frameCall(tabId, f.frameId, 'detect', args) })))
   const answered = results.filter((r) => r.d && !r.d.error)
   if (!answered.length) {
     const err = results.find((r) => r.d?.error)?.d?.error ?? (ok ? 'no-response' : 'content-missing')
@@ -151,7 +164,9 @@ async function scan(tabId) {
     framesWithoutEngine: results.length - list.length,
   }
   const size = () => new TextEncoder().encode(JSON.stringify(out)).length
-  // 상한을 넘으면 표가 없는 프레임부터 뺍니다
+  // 화면을 알아본 프레임·표가 많은 프레임을 앞에 둡니다. 상한을 넘으면 뒤(표가 없는 프레임)부터 뺍니다
+  list.sort((a, b) => screenScore(b.scan.detect) - screenScore(a.scan.detect) || (b.scan.grids?.length ?? 0) - (a.scan.grids?.length ?? 0))
+  out.frames = list
   if (size() > SCAN_MAX_BYTES) {
     list = list.filter((r) => (r.scan.grids?.length ?? 0) > 0)
     out.frames = list
@@ -164,7 +179,7 @@ async function scan(tabId) {
 }
 
 async function runCommand(tabId, cmd, args) {
-  if (cmd === 'detect') return detect(tabId)
+  if (cmd === 'detect') return detect(tabId, args)
   if (cmd === 'scan') return scan(tabId)
   if (cmd === 'stop') {
     const frames = await listFrames(tabId)
@@ -172,19 +187,22 @@ async function runCommand(tabId, cmd, args) {
     return { ok: true }
   }
   if (cmd === 'fill') {
+    const startedAt = Date.now()
     let frameId = await recallFrame(tabId)
     if (frameId == null) {
-      const d = await detect(tabId)
+      const d = await detect(tabId, { screen: args && args.screen })
       if (d.error || d.frameId == null) return { error: d.error || 'no-screen' }
       frameId = d.frameId
     }
     let result = await frameCall(tabId, frameId, 'fill', args)
     if (result && /Could not establish connection|Receiving end does not exist|No frame/i.test(String(result.error || ''))) {
       // 화면이 바뀌어 기억한 프레임이 없어진 경우: 다시 인식하고 한 번 더
-      const d = await detect(tabId)
+      const d = await detect(tabId, { screen: args && args.screen })
       if (!d.error && d.frameId != null) result = await frameCall(tabId, d.frameId, 'fill', args)
     }
-    await chrome.storage.local.set({ lastRun: { at: Date.now(), tabId, result } })
+    // 시간 초과 같은 오류가 content script의 정상 결과(fill-done)를 덮어쓰지 않게 합니다
+    const prev = (await chrome.storage.local.get('lastRun')).lastRun
+    if (!result.error || !prev || prev.at < startedAt) await chrome.storage.local.set({ lastRun: { at: Date.now(), tabId, result } })
     return result
   }
   if (cmd === 'ping') return frameCall(tabId, 0, 'ping')
@@ -204,8 +222,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
     case 'payloads': {
       // 웹앱 탭의 app-bridge.js에서만 받습니다
-      const origin = sender.origin || (sender.url ? new URL(sender.url).origin : '')
-      if (!sender.tab || !APP_ORIGIN.test(origin)) return false
+      if (!sender.tab || !isAppUrl(sender.url || '')) return false
+      const origin = new URL(sender.url).origin
       const payloads = cleanPayloads(msg.payloads)
       if (!payloads) return false
       return reply(storePayloads(payloads, origin).then(() => ({ ok: true, count: payloads.length })))

@@ -67,6 +67,8 @@
     if (h.includes('영역구분')) return 'area'
     if (h.includes('특기사항') && !h.includes('가져오기')) return 'note'
     if (h === '종합의견') return 'opinion'
+    if (h === '반') return 'class'
+    if (h === '학년') return 'grade'
     if (h === '영역') return 'area2'
     return null
   }
@@ -652,7 +654,8 @@
       const headEls = leaves(Array.from(root.querySelectorAll(HEAD_CELL_SEL)), HEAD_CELL_SEL).filter(visible)
       if (headEls.length < 2) return
       const headers = headEls.map((h) => oneLine(h.textContent))
-      const headerRowEl = headEls[0].closest('[role=row], [class*="row"]') || headEls[0].parentElement
+      const hr = headEls[0].closest('[role=row], [class*="row"]')
+      const headerRowEl = hr && root.contains(hr) ? hr : headEls[0].parentElement
       const rowEls = Array.from(root.querySelectorAll(ROW_SEL)).filter(
         (el) => !headEls.some((h) => el.contains(h)) && !el.querySelector(ROW_SEL) && visible(el),
       )
@@ -707,18 +710,25 @@
   const MENU_SEL =
     'nav, [role=navigation], [role=menu], [role=menubar], [role=tree], [class*="menu"], [class*="Menu"], [class*="tree"], [class*="aside"], [class*="gnb"], [class*="lnb"], [class*="breadcrumb"]'
 
+  // 제목은 화면 이름 낱말만 꺼내 씁니다. 화면의 다른 글자(학생 이름 등)는 내보내지 않습니다
+  const TITLE_PHRASES =
+    /학기말\s*종합\s*의견|행동\s*특성(?:\s*및\s*종합\s*의견)?|동아리\s*활동\s*관리|진로\s*활동\s*관리|교과\s*(?:별\s*)?평가|학생부\s*자료\s*기록|창의적\s*체험\s*활동|자율\s*·?\s*자치\s*활동|동아리\s*활동|진로\s*활동|학생\s*평가/g
+
+  /** 화면 제목 후보에서 찾은 화면 이름 낱말들 (원문 아님) */
   function pageTitles() {
     const out = []
     const push = (t) => {
-      t = oneLine(t)
-      if (t && t.length <= 40 && !out.includes(t)) out.push(t)
+      for (const m of String(t ?? '').match(TITLE_PHRASES) || []) {
+        const k = oneLine(m)
+        if (!out.includes(k)) out.push(k)
+      }
     }
     try {
       for (const app of cprApps()) push(appTitle(app))
     } catch {
       // 무시
     }
-    const sel = 'h1, h2, h3, h4, [role=heading], [class*="title"], [class*="Title"], [class*="tit"], [role=tab][aria-selected="true"], .cl-tabfolder-item.cl-selected, .cl-selected'
+    const sel = 'h1, h2, h3, h4, [role=heading], [class*="title"], [class*="Title"], [role=tab][aria-selected="true"], .cl-tabfolder-item.cl-selected'
     for (const el of Array.from(document.querySelectorAll(sel)).slice(0, 400)) {
       if (!visible(el) || el.closest(MENU_SEL) || el.closest('table, [role=grid], .cl-grid')) continue
       push(el.textContent)
@@ -739,7 +749,7 @@
     if (g.has('level') && g.has('result')) return '교과평가'
     if (g.has('semester') || (g.has('opinion') && titleScreen === '학기말종합의견')) return '학기말종합의견'
     if (g.has('behavior')) return '행동특성'
-    if (g.has('note') && hs.some((h) => h.includes('영역구분'))) return '학생부자료기록'
+    if (g.has('note') && g.has('area')) return '학생부자료기록'
     if (g.has('note')) {
       if (titleScreen === '진로활동관리' || titleScreen === '동아리활동관리') return titleScreen
       if (hs.some((h) => h === '학년' || h === '반')) return '동아리활동관리'
@@ -801,21 +811,54 @@
     return ok(a.cpr) || ok(a.dom) || null
   }
 
-  function detect() {
+  const cleanPath = () => location.pathname.split(';')[0]
+
+  /** args.screen: 팝업의 "화면 지정" (있으면 그 화면으로 표를 고릅니다) */
+  function detect(args) {
     const a = analyze()
-    const g = a.screen !== 'unknown' ? pickGrid(a.screen, a) : null
+    const forced = args && SCREENS.includes(args.screen) ? args.screen : null
+    const screen = forced || a.screen
+    const g = screen !== 'unknown' ? pickGrid(screen, a) : null
     return {
-      screen: a.screen,
+      screen,
+      detectedScreen: a.screen,
+      forced: !!forced,
+      running,
       ready: !!g,
       strategy: g ? (g.source === 'cpr' ? 'cpr' : 'dom') : null,
       rows: g ? g.rowCount() : 0,
       cpr: !!cprPlatform(),
       cprVersion: cprVersion(),
       apps: cprApps().length,
+      titleScreen: a.titleScreen,
       titles: a.titles.slice(0, 5),
       grids: a.grids.slice(0, 20).map(gridSummary),
-      path: location.pathname,
+      path: cleanPath(),
     }
+  }
+
+  // ---------- 과목 확인 (학기말종합의견) ----------
+  const SUBJECTS = ['국어', '수학', '사회', '과학', '영어', '도덕', '실과', '체육', '음악', '미술', '정보', '바른생활', '슬기로운생활', '즐거운생활', '통합']
+  /** 표 밖에서 보이는 과목 콤보/제목 글자. 과목 이름이 없으면 null (비교에만 쓰고 내보내지 않음) */
+  function screenSubjectLabel(g) {
+    const inGrid = (el) => (g.root && g.root.contains(el)) || el.closest('table, [role=grid], .cl-grid')
+    const texts = []
+    for (const el of document.querySelectorAll('select, .cl-combobox, [role=combobox]')) {
+      if (!visible(el) || inGrid(el) || el.closest(MENU_SEL)) continue
+      if (el.tagName === 'SELECT') texts.push(el.options[el.selectedIndex] ? el.options[el.selectedIndex].textContent : '')
+      else {
+        const inp = el.querySelector('input')
+        texts.push(inp ? inp.value : el.textContent)
+      }
+    }
+    for (const el of document.querySelectorAll('h1, h2, h3, h4, [class*="title"], [class*="Title"]')) {
+      if (visible(el) && !inGrid(el) && !el.closest(MENU_SEL)) texts.push(el.textContent)
+    }
+    for (const t of texts) {
+      const n = norm(t)
+      if (SUBJECTS.some((x) => n.includes(x))) return t
+    }
+    return null
   }
 
   // ---------- 저장 ----------
@@ -898,24 +941,48 @@
     const want = new Map()
     for (const r of job.rows) if (r && Number.isInteger(r.student)) want.set(r.student, r)
 
-    // 행 → 번호 (병합/빈 칸은 앞 번호를 이어 씀)
+    const single = SINGLE_ROW.includes(screen)
     const n = g.rowCount()
+
+    // 동아리: 여러 반(학년)이 섞인 명단이면 번호가 겹치므로 입력하지 않습니다
+    if (screen === '동아리활동관리') {
+      for (const role of ['class', 'grade']) {
+        if (!g.has(role)) continue
+        const vals = new Set()
+        for (let r = 0; r < n; r++) {
+          const v = norm(g.readText(r, role))
+          if (v) vals.add(v)
+        }
+        if (vals.size > 1)
+          return { error: 'mixed-classes', screen, strategy: g.source === 'cpr' ? 'cpr' : 'dom', filled: 0, cells: 0, missing: [], ambiguous: [], unmatchedStandards: [], saved: false, notes: ['여러 반이 섞인 명단입니다. 반을 하나만 조회한 뒤 다시 실행하세요.'] }
+      }
+    }
+
+    // 학기말종합의견: 화면에서 고른 과목이 데이터 과목과 다르면 입력하지 않습니다
+    if (screen === '학기말종합의견' && job.subject) {
+      const label = screenSubjectLabel(g)
+      if (label && !norm(label).includes(norm(job.subject)))
+        return { error: 'subject-mismatch', screen, strategy: g.source === 'cpr' ? 'cpr' : 'dom', filled: 0, cells: 0, missing: [], ambiguous: [], unmatchedStandards: [], saved: false, notes: ['화면 과목과 데이터 과목이 다름'] }
+    }
+
+    // 행 → 번호. 여러 행 화면(교과평가·학생부자료기록)만 병합/빈 칸에 앞 번호를 이어 씁니다
     const rowNum = []
     let last = null
     for (let r = 0; r < n; r++) {
       const v = g.readNumber(r)
       if (v != null) last = v
-      rowNum.push(last)
+      rowNum.push(single ? v : last)
     }
 
-    // 한 학생 한 행 화면에서 번호가 여러 행이면(다른 반 등) 건너뜀
+    // 같은 번호가 떨어져서 다시 나오면(다른 반 등) 건너뜀. 한 행 화면은 두 번 이상 나오면 건너뜀
     const ambiguous = new Set()
-    if (SINGLE_ROW.includes(screen)) {
-      const cnt = new Map()
-      rowNum.forEach((k) => k != null && cnt.set(k, (cnt.get(k) || 0) + 1))
-      for (const [k, c] of cnt) if (c > 1 && want.has(k)) ambiguous.add(k)
-      if (ambiguous.size) notes.push(`번호가 여러 행에 있어 건너뜀: ${[...ambiguous].join(', ')} (반이 다른 학생일 수 있음)`)
-    }
+    const runs = new Map()
+    rowNum.forEach((k, r) => {
+      if (k == null) return
+      if (single || r === 0 || rowNum[r - 1] !== k) runs.set(k, (runs.get(k) || 0) + 1)
+    })
+    for (const [k, c] of runs) if (c > 1 && want.has(k)) ambiguous.add(k)
+    if (ambiguous.size) notes.push(`번호가 여러 곳에 있어 건너뜀: ${[...ambiguous].sort((x, y) => x - y).join(', ')} (반이 다른 학생일 수 있음)`)
 
     // 작업 목록
     const tasks = [] // {r, student, cells:[{role, value}]}
@@ -1006,6 +1073,7 @@
     let saved = false
     let confirmed = 0
     if (aborted) notes.push('중지했습니다. 저장은 누르지 않았습니다.')
+    else if (job.save && (verifyFailed > 0 || failed > 0)) notes.push('일부 칸이 확인되지 않아 저장하지 않았습니다. 확인 후 직접 저장하세요.')
     else if (job.save && cellsWritten > 0) {
       const s = await clickSave()
       saved = s.saved
@@ -1021,6 +1089,7 @@
       cells: cellsWritten,
       skipped,
       verifyFailed,
+      failed,
       missing,
       ambiguous: [...ambiguous],
       unmatchedStandards,
@@ -1122,12 +1191,14 @@
     const out = {
       kind: 'sgb-neis-frame-scan',
       engine: VERSION,
-      path: location.pathname,
+      path: cleanPath(),
       top: window.top === window,
       detect: detect(),
+      titleScreen: a.titleScreen,
       titles: a.titles,
       cpr: { present: !!cprPlatform(), version: cprVersion() },
-      apps: cprApps().map((app) => ({ id: appId(app), title: appTitle(app) })),
+      // 앱 제목도 화면 이름 낱말만 (원문 아님)
+      apps: cprApps().map((app) => ({ id: appId(app), title: (appTitle(app).match(TITLE_PHRASES) || []).map(oneLine).join(' ') || null })),
       grids: a.grids.slice(0, 30).map(gridScan),
       controls: cprControls(),
       dom: {
@@ -1172,7 +1243,7 @@
           result = { ok: true, version: VERSION }
           break
         case 'detect':
-          result = detect()
+          result = detect(d.args)
           break
         case 'scan':
           result = scan(d.args)

@@ -8,7 +8,6 @@
 
   const TIMEOUT = { detect: 10000, scan: 10000, fill: 10 * 60 * 1000, stop: 3000, ping: 500 }
   const pending = new Map() // nonce -> { resolve, timer, progress }
-  let injectAsked = false
 
   const newNonce = () => {
     const a = new Uint32Array(4)
@@ -27,10 +26,7 @@
       p.resolve(d.result)
     } else if (typeof d.__sgbProgress === 'string' && pending.has(d.__sgbProgress)) {
       const p = pending.get(d.__sgbProgress)
-      if (p.progress) {
-        const { __sgbProgress: _n, ...rest } = d
-        p.progress(rest)
-      }
+      if (p.progress) p.progress(d)
     }
   })
 
@@ -47,40 +43,62 @@
     })
   }
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  // ---------- 페이지에서 온 값 정리 (페이지 스크립트가 같은 창에 메시지를 보낼 수 있으므로) ----------
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
+  const ints = (v) => (Array.isArray(v) ? v.filter((x) => Number.isInteger(x)).slice(0, 200) : [])
+  const short = (v, n) => String(v ?? '').slice(0, n)
+
+  function cleanProgress(d) {
+    return {
+      phase: short(d.phase, 20),
+      done: num(d.done),
+      total: num(d.total),
+      current: Number.isInteger(d.current) ? d.current : null,
+      type: 'progress',
+    }
+  }
+
+  function cleanResult(r) {
+    if (!r || typeof r !== 'object') return { error: 'no-result' }
+    const out = {
+      screen: short(r.screen, 20),
+      strategy: r.strategy === 'cpr' || r.strategy === 'dom' ? r.strategy : null,
+      filled: num(r.filled),
+      rows: num(r.rows),
+      cells: num(r.cells),
+      skipped: num(r.skipped),
+      verifyFailed: num(r.verifyFailed),
+      failed: num(r.failed),
+      confirmed: num(r.confirmed),
+      missing: ints(r.missing),
+      ambiguous: ints(r.ambiguous),
+      unmatchedStandards: Array.isArray(r.unmatchedStandards)
+        ? r.unmatchedStandards
+            .filter((u) => u && Number.isInteger(u.student))
+            .slice(0, 200)
+            .map((u) => ({ student: u.student, code: short(u.code, 100) }))
+        : [],
+      notes: Array.isArray(r.notes) ? r.notes.slice(0, 20).map((x) => short(x, 300)) : [],
+      saved: r.saved === true,
+      aborted: r.aborted === true,
+    }
+    if (r.error) out.error = short(r.error, 100)
+    return out
+  }
 
   async function enginePresent(ms = TIMEOUT.ping) {
     const r = await callEngine('ping', null, ms)
     return !!(r && r.ok)
   }
 
-  /** MAIN world 엔진이 없으면 넣습니다: 1) 서비스 워커의 scripting.executeScript(world:'MAIN') 2) <script src> */
+  /** MAIN world 엔진이 없으면 서비스 워커에 넣어 달라고 합니다 (scripting.executeScript, world:'MAIN') */
   async function ensureEngine() {
     if (await enginePresent()) return true
-    if (!injectAsked) {
-      injectAsked = true
-      try {
-        await chrome.runtime.sendMessage({ type: 'inject-main' })
-      } catch {
-        // 무시하고 다음 방법
-      }
-      if (await enginePresent(800)) return true
-    }
     try {
-      const s = document.createElement('script')
-      s.src = chrome.runtime.getURL('src/neis-main.js')
-      s.async = false
-      ;(document.head || document.documentElement).appendChild(s)
-      await new Promise((r) => {
-        s.onload = r
-        s.onerror = r
-        setTimeout(r, 1500)
-      })
-      s.remove()
+      await chrome.runtime.sendMessage({ type: 'inject-main' })
     } catch {
-      // 무시
+      // 아래에서 엔진 없음으로 처리
     }
-    await sleep(50)
     return enginePresent(800)
   }
 
@@ -94,10 +112,12 @@
     }
     if (!(await ensureEngine())) return { error: 'engine-missing' }
     if (cmd === 'fill') {
-      const result = await callEngine('fill', msg.args, TIMEOUT.fill, (p) => {
-        chrome.runtime.sendMessage({ type: 'progress', ...p }).catch(() => {})
-      })
-      chrome.runtime.sendMessage({ type: 'fill-done', result }).catch(() => {})
+      const result = cleanResult(
+        await callEngine('fill', msg.args, TIMEOUT.fill, (p) => {
+          chrome.runtime.sendMessage(cleanProgress(p)).catch(() => {})
+        }),
+      )
+      chrome.runtime.sendMessage({ result, type: 'fill-done' }).catch(() => {})
       return result
     }
     return callEngine(cmd, msg.args, TIMEOUT[cmd])

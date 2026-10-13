@@ -28,6 +28,9 @@
 </nav>
 <main>
   <div class="page-title"><h2 id="title"></h2></div>
+  <!-- 표 밖에 보이는 학생 정보(선택된 행 표시 등). 구조 수집/인식 결과에 나오면 안 됩니다 -->
+  <div class="cl-selected">3번 학생A</div>
+  <div class="tit">학생B 선택</div>
   <div class="toolbar" id="toolbar"></div>
   <div id="grid"></div>
 </main>
@@ -44,7 +47,13 @@
 
 <script>
 (() => {
-  const screen = new URLSearchParams(location.search).get('screen') || '교과평가'
+  const Q = new URLSearchParams(location.search)
+  const screen = Q.get('screen') || '교과평가'
+  // ?classes=2: 두 반이 한 표에 섞인 경우 (두 번째 반은 1·2번만)
+  const BLOCKS = Q.get('classes') === '2' ? [[3, [1, 2, 3, 4]], [4, [1, 2]]] : [[3, [1, 2, 3, 4]]]
+  // ?readonly=N: N번 학생의 입력 칸을 읽기 전용으로 (입력 실패 → 저장 안 함 확인)
+  const READONLY = Number(Q.get('readonly')) || 0
+  const ro = (s) => (s === READONLY ? ' readonly' : '')
   window.__saveClicks = 0
   window.__confirmClicks = 0
   window.__saved = false
@@ -74,6 +83,11 @@
     진로활동관리: ['조회', '저장'],
   }[screen]
   const tb = document.getElementById('toolbar')
+  if (screen === '학기말종합의견') {
+    // 과목 고르기 (?subject=수학 으로 바꿀 수 있음)
+    const sub = Q.get('subject') || '국어'
+    tb.insertAdjacentHTML('beforeend', `<label>과목 <select id="subject">${['국어', '수학', '사회'].map((x) => `<option${x === sub ? ' selected' : ''}>${x}</option>`).join('')}</select></label>`)
+  }
   for (const b of buttons) {
     const el = document.createElement('button')
     el.type = 'button'
@@ -90,7 +104,7 @@
       ['[6국05-02]', '작품의 구성 요소를 이해하며 작품을 감상한다.', '작품 감상하기'],
     ]
     html += '<table id="grid-eval"><thead><tr><th>번호</th><th>성명</th><th>영역</th><th>성취기준</th><th>평가요소</th><th>단계</th><th>평가결과</th></tr></thead><tbody>'
-    for (const s of STUDENTS) {
+    for (const [, list] of BLOCKS) for (const s of list) {
       STD.forEach(([code, text, el], i) => {
         const pre = s === 2 && i === 0
         html += '<tr>'
@@ -105,17 +119,17 @@
   } else if (screen === '학기말종합의견') {
     html += '<table id="grid-sem"><thead><tr><th>반/번호</th><th>성명</th><th>참고자료</th><th>학기말 종합의견</th></tr></thead><tbody>'
     for (const s of STUDENTS)
-      html += `<tr><td>3/${s}</td><td>${NAMES[s - 1]}</td><td><button type="button">조회</button></td><td><textarea>${s === 2 ? '기존 의견' : ''}</textarea></td></tr>`
+      html += `<tr><td>3/${s}</td><td>${NAMES[s - 1]}</td><td><button type="button">조회</button></td><td><textarea${ro(s)}>${s === 2 ? '기존 의견' : ''}</textarea></td></tr>`
     html += '</tbody></table>'
   } else if (screen === '행동특성') {
     html += '<table id="grid-beh"><thead><tr><th>번호</th><th>성명</th><th>행동특성 및 종합의견</th><th>글자수 Byte</th><th>위탁</th></tr></thead><tbody>'
     for (const s of STUDENTS)
-      html += `<tr><td>${s}</td><td>${NAMES[s - 1]}</td><td><textarea>${s === 2 ? '기존 행발' : ''}</textarea></td><td>0</td><td></td></tr>`
+      html += `<tr><td>${s}</td><td>${NAMES[s - 1]}</td><td><textarea${ro(s)}>${s === 2 ? '기존 행발' : ''}</textarea></td><td>0</td><td></td></tr>`
     html += '</tbody></table>'
   } else if (screen === '학생부자료기록') {
     const AREAS = ['자율·자치활동', '동아리활동', '자율동아리', '진로활동']
     html += '<table id="grid-cre"><thead><tr><th>번호</th><th>성명</th><th>영역 구분</th><th>특기사항</th><th>글자수</th></tr></thead><tbody>'
-    for (const s of STUDENTS) {
+    for (const [, list] of BLOCKS) for (const s of list) {
       AREAS.forEach((a, i) => {
         html += '<tr>'
         if (i === 0) html += `<td rowspan="${AREAS.length}">${s}</td><td rowspan="${AREAS.length}">${NAMES[s - 1]}</td>`
@@ -126,8 +140,8 @@
     html += '</tbody></table>'
   } else {
     html += '<table id="grid-club"><thead><tr><th>학년</th><th>반</th><th>번호</th><th>성명</th><th>특기사항</th><th>글자수</th></tr></thead><tbody>'
-    for (const s of STUDENTS)
-      html += `<tr><td>6</td><td>3</td><td>${s}</td><td>${NAMES[s - 1]}</td><td><textarea>${s === 2 ? '기존 특기사항' : ''}</textarea></td><td>0</td></tr>`
+    for (const [ban, list] of BLOCKS) for (const s of list)
+      html += `<tr><td>6</td><td>${ban}</td><td>${s}</td><td>${NAMES[s - 1]}</td><td><textarea${ro(s)}>${s === 2 && ban === 3 ? '기존 특기사항' : ''}</textarea></td><td>0</td></tr>`
     html += '</tbody></table>'
   }
   document.getElementById('grid').innerHTML = html

@@ -127,6 +127,9 @@ for (const screen of SCREENS) {
 
   const d = await page.evaluate(() => window.__sgbNeis.detect())
   eq(d.screen, screen, `${screen}: detect.screen`)
+  const dj = JSON.stringify(d)
+  ok(!NAMES.some((n) => dj.includes(n)) && !dj.includes('선택'), `${screen}: detect에 표 밖 글자(학생A/학생B 선택) 없음`, d.titles)
+  ok(Array.isArray(d.titles) && d.titles.every((t) => /평가|종합\s*의견|행동\s*특성|활동|자료\s*기록|관리/.test(t)), `${screen}: titles는 화면 이름 낱말만`, d.titles)
   ok(d.ready && d.strategy === 'dom', `${screen}: detect ready (dom)`, d)
   ok(d.cpr === false, `${screen}: cpr 없음`)
 
@@ -134,6 +137,7 @@ for (const screen of SCREENS) {
   const scanJson = JSON.stringify(scan)
   ok(!NAMES.some((n) => scanJson.includes(n)), `${screen}: scan에 이름 없음`)
   ok(!scanJson.includes('기존'), `${screen}: scan에 입력 칸 내용 없음`)
+  ok(!scanJson.includes('선택') && !scanJson.includes('3번'), `${screen}: scan에 표 밖 글자 없음`)
   ok(Buffer.byteLength(scanJson) < 300 * 1024, `${screen}: scan < 300KB`, Buffer.byteLength(scanJson))
   ok(scan.grids.length >= 1 && scan.grids[0].headers.includes('성명'), `${screen}: scan 머리글 포함`)
   ok(scan.grids[0].numbers.length > 0 && scan.grids[0].numbers.every((n) => Number.isInteger(n)), `${screen}: scan 번호 표본`, scan.grids[0].numbers)
@@ -219,6 +223,68 @@ for (const screen of SCREENS) {
   await page.keyboard.press('Shift')
   const r2 = await p2
   ok(r2.aborted === true && (await counters(page)).save === 0, '키 입력으로 중지', r2)
+}
+
+// 두 반이 한 표에 섞인 경우: 떨어져서 다시 나오는 번호는 건너뜀
+for (const screen of ['교과평가', '학생부자료기록']) {
+  console.log(`[엔진] 두 반 · ${screen}`)
+  await page.goto(MOCK(screen) + '&classes=2')
+  await page.addScriptTag({ path: ENGINE })
+  const r = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor(screen, { mode: 'overwrite', save: true }))
+  eq(r.ambiguous, [1, 2], `두 반 ${screen}: 1·2번 건너뜀`)
+  eq(r.filled, 1, `두 반 ${screen}: 3번만 입력`)
+  eq(r.missing, [9], `두 반 ${screen}: 못 찾은 번호`)
+  const v = await readMock(page, screen)
+  const touched = v.filter((x) => (x.text && x.text.includes('문장')) || (x.result && x.result.startsWith('기준')))
+  ok(touched.every((x) => x.student === 3), `두 반 ${screen}: 1·2번 행은 손대지 않음`, touched)
+}
+
+// 동아리: 여러 반이 섞인 명단은 입력 거부
+{
+  console.log('[엔진] 동아리 · 여러 반')
+  await page.goto(MOCK('동아리활동관리') + '&classes=2')
+  await page.addScriptTag({ path: ENGINE })
+  const r = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor('동아리활동관리', { mode: 'overwrite', save: true }))
+  eq(r.error, 'mixed-classes', '동아리 여러 반: 거부')
+  ok(r.notes.some((n) => n.includes('여러 반이 섞인 명단')), '동아리 여러 반: 안내')
+  const v = await readMock(page, '동아리활동관리')
+  ok(v.every((x) => !x.text.includes('문장')) && (await counters(page)).save === 0, '동아리 여러 반: 입력·저장 없음')
+}
+
+// 학기말종합의견: 화면 과목과 데이터 과목이 다르면 거부
+{
+  console.log('[엔진] 학기말종합의견 · 과목 확인')
+  await openMock(page, '학기말종합의견')
+  const bad = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor('학기말종합의견', { subject: '수학', mode: 'overwrite', save: true }))
+  eq(bad.error, 'subject-mismatch', '과목 다름: 거부')
+  ok(bad.notes.includes('화면 과목과 데이터 과목이 다름'), '과목 다름: 안내')
+  ok((await readMock(page, '학기말종합의견')).every((x) => !x.text.includes('문장')) && (await counters(page)).save === 0, '과목 다름: 입력·저장 없음')
+  const good = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor('학기말종합의견', { subject: '국어', mode: 'overwrite', save: false }))
+  ok(!good.error && good.filled === 3, '과목 같음: 입력', good)
+}
+
+// 입력 실패 칸이 있으면 저장하지 않음
+{
+  console.log('[엔진] 입력 실패 → 저장 안 함')
+  await page.goto(MOCK('행동특성') + '&readonly=3')
+  await page.addScriptTag({ path: ENGINE })
+  const r = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor('행동특성', { mode: 'overwrite', save: true }))
+  ok(r.failed === 1 && r.filled === 2, '입력 실패: 1칸 실패, 2명 입력', r)
+  ok(r.saved === false && (await counters(page)).save === 0, '입력 실패: 저장 안 누름')
+  ok(r.notes.includes('일부 칸이 확인되지 않아 저장하지 않았습니다. 확인 후 직접 저장하세요.'), '입력 실패: 안내')
+}
+
+// 진행 중 표시 (팝업을 다시 열 때)
+{
+  await openMock(page, '행동특성')
+  const p = page.evaluate((job) => window.__sgbNeis.fill(job), jobFor('행동특성', { mode: 'overwrite', save: false, delayMs: 300 }))
+  await sleep(100)
+  const d = await page.evaluate(() => window.__sgbNeis.detect())
+  ok(d.running === true, 'detect: 입력 중이면 running')
+  await p
+  ok((await page.evaluate(() => window.__sgbNeis.detect())).running === false, 'detect: 끝나면 running false')
+  const f = await page.evaluate(() => window.__sgbNeis.detect({ screen: '교과평가' }))
+  ok(f.screen === '교과평가' && f.forced && f.detectedScreen === '행동특성' && f.ready === false, 'detect: 화면 지정', f)
 }
 
 // cpr(eXBuilder6) 경로 — 흉내 낸 window.cpr
@@ -315,7 +381,10 @@ eq(payloadCount, 4, 'e2e: 팝업 데이터 4개')
 const nameChip = await popup.locator('#payloads li').nth(3).innerText()
 ok(nameChip.includes('이름 의심 1'), 'e2e: 사전 검사 이름 의심', nameChip)
 const options = await popup.locator('#fill-payload option').allInnerTexts()
-ok(options.length === 1 && options[0].includes('국어'), 'e2e: 교과평가 → 교과 데이터만', options)
+ok(options.length === 2 && options[0] === '과목을 고르세요' && options[1].includes('국어'), 'e2e: 교과평가 → 과목 고르기 + 교과 데이터만', options)
+ok(await popup.locator('#btn-fill').isDisabled(), 'e2e: 과목을 고르기 전에는 자동 입력 꺼짐')
+const fdet = await popup.evaluate((tabId) => chrome.runtime.sendMessage({ type: 'neis-command', tabId, cmd: 'detect', args: { screen: '행동특성' } }), tabId)
+ok(fdet.screen === '행동특성' && fdet.detectedScreen === '교과평가' && fdet.ready === false, 'e2e: 화면 지정으로 detect', fdet)
 
 // 구조 수집 내려받기
 const [download] = await Promise.all([popup.waitForEvent('download', { timeout: 15000 }), popup.click('#btn-scan')])
@@ -328,6 +397,8 @@ ok(Buffer.byteLength(scanText) < 300 * 1024, 'e2e: 구조 수집 < 300KB')
 ok(scanObj.frames?.length >= 1 && scanObj.frames[0].scan.path === '/edu/mock.do', 'e2e: 구조 수집 프레임/경로', scanObj.frames?.[0]?.scan?.path)
 
 // 자동 입력 (저장 포함)
+await popup.selectOption('#fill-payload', { index: 1 })
+ok(await popup.locator('#btn-fill').isEnabled(), 'e2e: 과목을 고르면 자동 입력 켜짐')
 await popup.click('#btn-fill')
 await popup.waitForFunction(() => document.getElementById('log').textContent.includes('명 입력'), null, { timeout: 30000 })
 const log = await popup.locator('#log').innerText()

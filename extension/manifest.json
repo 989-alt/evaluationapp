@@ -4,14 +4,21 @@
   "version": "0.1.0",
   "description": "AI 생기부 보조 생성기 웹앱에서 만든 교과 평어·행동특성·창체 특기사항을 나이스 화면에 번호순으로 자동 입력합니다. 학생 이름은 읽지 않고 서버와 통신하지 않습니다.",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "scripting", "tabs", "activeTab"],
+  "permissions": [
+    "storage",
+    "scripting",
+    "tabs",
+    "activeTab"
+  ],
   "host_permissions": [
-    "https://989-alt.github.io/*",
+    "https://989-alt.github.io/evaluationapp/*",
     "http://localhost/*",
     "http://127.0.0.1/*",
     "https://*.neis.go.kr/*"
   ],
-  "optional_host_permissions": ["https://*.go.kr/*"],
+  "optional_host_permissions": [
+    "https://*.go.kr/*"
+  ],
   "background": {
     "service_worker": "src/background.js"
   },
@@ -31,22 +38,26 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://989-alt.github.io/*", "http://localhost/*", "http://127.0.0.1/*"],
-      "js": ["src/app-bridge.js"],
+      "matches": [
+        "https://989-alt.github.io/evaluationapp/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "src/app-bridge.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://*.neis.go.kr/*"],
-      "js": ["src/neis-content.js"],
+      "matches": [
+        "https://*.neis.go.kr/*"
+      ],
+      "js": [
+        "src/neis-content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true,
       "match_about_blank": true
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["src/neis-main.js"],
-      "matches": ["https://*.neis.go.kr/*"]
     }
   ]
 }

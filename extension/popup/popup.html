@@ -37,6 +37,7 @@
     <h2>화면</h2>
     <div class="screen-name" id="screen-name">확인 중…</div>
     <p class="muted small" id="screen-status"></p>
+    <p class="muted tiny" id="screen-detail"></p>
     <label class="field-row small">
       <span>화면 지정</span>
       <select id="screen-override" class="field">
@@ -67,6 +68,7 @@
     <label class="field-row small" id="area-row" hidden>
       <span>영역</span>
       <select id="fill-area" class="field">
+        <option value="">영역을 고르세요</option>
         <option value="자율">자율·자치활동</option>
         <option value="진로">진로활동</option>
       </select>
@@ -78,6 +80,7 @@
     </div>
     <label class="check small"><input type="checkbox" id="fill-save" checked> 입력 후 저장 누르기</label>
     <button type="button" class="btn-accent big" id="btn-fill">자동 입력 ▶</button>
+    <p class="msg small" id="fill-msg"></p>
     <div class="btns">
       <button type="button" class="btn btn-sm" id="btn-preview">미리보기(저장 안 함)</button>
       <button type="button" class="btn btn-sm" id="btn-stop" disabled>중지</button>
