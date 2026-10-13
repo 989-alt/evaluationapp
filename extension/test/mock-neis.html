@@ -84,9 +84,14 @@
   }[screen]
   const tb = document.getElementById('toolbar')
   if (screen === '학기말종합의견') {
-    // 과목 고르기 (?subject=수학 으로 바꿀 수 있음)
-    const sub = Q.get('subject') || '국어'
-    tb.insertAdjacentHTML('beforeend', `<label>과목 <select id="subject">${['국어', '수학', '사회'].map((x) => `<option${x === sub ? ' selected' : ''}>${x}</option>`).join('')}</select></label>`)
+    // 과목 고르기: ?subject=수학 (고른 과목), ?subjects=국어(독서),수학 (목록), ?nosubject=1 (콤보 없음)
+    const subs = (Q.get('subjects') || '국어,수학,사회').split(',')
+    const sub = Q.get('subject') || subs[0]
+    if (!Q.get('nosubject'))
+      tb.insertAdjacentHTML('beforeend', `<label>과목 <select id="subject">${subs.map((x) => `<option${x === sub ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></label>`)
+    // ?titles=학생정보,통합조회 : 표 밖 패널 제목 / ?sidemenu=1 : 메뉴로 표시되지 않은 과목 목록
+    for (const t of (Q.get('titles') || '').split(',').filter(Boolean)) tb.insertAdjacentHTML('beforebegin', `<div class="panel-title">${esc(t)}</div>`)
+    if (Q.get('sidemenu')) tb.insertAdjacentHTML('beforebegin', '<div class="side-list"><div class="item-title">국어</div><div class="item-title">수학</div><div class="item-title">사회</div></div>')
   }
   for (const b of buttons) {
     const el = document.createElement('button')
@@ -104,7 +109,15 @@
       ['[6국05-02]', '작품의 구성 요소를 이해하며 작품을 감상한다.', '작품 감상하기'],
     ]
     html += '<table id="grid-eval"><thead><tr><th>번호</th><th>성명</th><th>영역</th><th>성취기준</th><th>평가요소</th><th>단계</th><th>평가결과</th></tr></thead><tbody>'
-    for (const [, list] of BLOCKS) for (const s of list) {
+    // ?grouped=1: 성취기준별로 묶인 표 (성취기준 1의 모든 학생 → 성취기준 2의 모든 학생)
+    if (Q.get('grouped')) STD.forEach(([code, text, el], i) => {
+      for (const s of STUDENTS) {
+        const pre = s === 2 && i === 0
+        html += `<tr><td>${s}</td><td>${NAMES[s - 1]}</td><td>문학</td><td>${esc(code)} ${esc(text)}</td><td>${esc(el)}</td>`
+        html += `<td>${levelSelect(pre ? '보통' : '')}</td><td><input type="text" class="result" value="${pre ? '기존 결과' : ''}"></td></tr>`
+      }
+    })
+    else for (const [, list] of BLOCKS) for (const s of list) {
       STD.forEach(([code, text, el], i) => {
         const pre = s === 2 && i === 0
         html += '<tr>'
@@ -142,6 +155,8 @@
     html += '<table id="grid-club"><thead><tr><th>학년</th><th>반</th><th>번호</th><th>성명</th><th>특기사항</th><th>글자수</th></tr></thead><tbody>'
     for (const [ban, list] of BLOCKS) for (const s of list)
       html += `<tr><td>6</td><td>${ban}</td><td>${s}</td><td>${NAMES[s - 1]}</td><td><textarea${ro(s)}>${s === 2 && ban === 3 ? '기존 특기사항' : ''}</textarea></td><td>0</td></tr>`
+    // ?footer=1: 합계 행 (반 칸이 "계")
+    if (Q.get('footer')) html += '<tr><td colspan="2">계</td><td></td><td></td><td></td><td>4명</td></tr>'
     html += '</tbody></table>'
   }
   document.getElementById('grid').innerHTML = html

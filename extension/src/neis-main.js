@@ -114,6 +114,13 @@
     return t.includes(norm(area))
   }
 
+  /** 성취기준 칸의 코드 (예: "6국05-01"). 코드가 없으면 앞 40자 */
+  function rowStdKey(text) {
+    const t = normCode(text)
+    const m = t.match(/\d+[가-힣]+\d+-\d+/)
+    return m ? m[0] : t.slice(0, 40)
+  }
+
   const lastInt = (text) => {
     const m = String(text ?? '').match(/\d+/g)
     return m ? Number(m[m.length - 1]) : null
@@ -839,26 +846,52 @@
 
   // ---------- 과목 확인 (학기말종합의견) ----------
   const SUBJECTS = ['국어', '수학', '사회', '과학', '영어', '도덕', '실과', '체육', '음악', '미술', '정보', '바른생활', '슬기로운생활', '즐거운생활', '통합']
-  /** 표 밖에서 보이는 과목 콤보/제목 글자. 과목 이름이 없으면 null (비교에만 쓰고 내보내지 않음) */
+  const stripParen = (t) => norm(t).replace(/\([^)]*\)/g, '')
+  /** 글자에서 "낱말 전체가 과목 이름"인 것만 찾습니다 ("학생정보"·"통합조회"는 과목 아님, "국어(독서)"는 국어) */
+  function subjectsIn(text) {
+    const out = new Set()
+    for (const tok of String(text ?? '').split(/[\s:：/|·,]+/)) {
+      const base = stripParen(tok)
+      if (SUBJECTS.includes(base)) out.add(base)
+    }
+    return out
+  }
+  /** 콤보 옆 이름표 글자 (label, aria-label, 앞 형제, 짧은 부모 글자) */
+  function nearLabel(el) {
+    const parts = [el.getAttribute('aria-label') || '']
+    const lab = el.closest('label')
+    if (lab) parts.push(lab.textContent)
+    if (el.previousElementSibling) parts.push(el.previousElementSibling.textContent)
+    const par = el.parentElement
+    if (par && par.textContent.length <= 40) parts.push(par.textContent)
+    return parts.join(' ')
+  }
+  /**
+   * 화면에서 고른 과목 (비교에만 쓰고 내보내지 않음).
+   * "과목/교과" 이름표가 붙은 콤보를 먼저 보고, 없으면 표 밖 콤보·제목 전체에서 찾습니다.
+   * 서로 다른 과목이 0개이거나 2개 이상이면 null(막지 않음)
+   */
   function screenSubjectLabel(g) {
     const inGrid = (el) => (g.root && g.root.contains(el)) || el.closest('table, [role=grid], .cl-grid')
-    const texts = []
+    const preferred = new Set()
+    const all = new Set()
     for (const el of document.querySelectorAll('select, .cl-combobox, [role=combobox]')) {
       if (!visible(el) || inGrid(el) || el.closest(MENU_SEL)) continue
-      if (el.tagName === 'SELECT') texts.push(el.options[el.selectedIndex] ? el.options[el.selectedIndex].textContent : '')
+      let text
+      if (el.tagName === 'SELECT') text = el.options[el.selectedIndex] ? el.options[el.selectedIndex].textContent : ''
       else {
         const inp = el.querySelector('input')
-        texts.push(inp ? inp.value : el.textContent)
+        text = inp ? inp.value : el.textContent
       }
+      const found = subjectsIn(text)
+      found.forEach((x) => all.add(x))
+      if (/과목|교과/.test(norm(nearLabel(el)))) found.forEach((x) => preferred.add(x))
     }
+    if (preferred.size === 1) return [...preferred][0]
     for (const el of document.querySelectorAll('h1, h2, h3, h4, [class*="title"], [class*="Title"]')) {
-      if (visible(el) && !inGrid(el) && !el.closest(MENU_SEL)) texts.push(el.textContent)
+      if (visible(el) && !inGrid(el) && !el.closest(MENU_SEL)) subjectsIn(el.textContent).forEach((x) => all.add(x))
     }
-    for (const t of texts) {
-      const n = norm(t)
-      if (SUBJECTS.some((x) => n.includes(x))) return t
-    }
-    return null
+    return all.size === 1 ? [...all][0] : null
   }
 
   // ---------- 저장 ----------
@@ -950,8 +983,10 @@
         if (!g.has(role)) continue
         const vals = new Set()
         for (let r = 0; r < n; r++) {
+          // 합계/계 행, 본문에 다시 나온 머리글 행은 빼고 셉니다 (번호가 있고 값에 숫자가 있는 행만)
+          if (g.readNumber(r) == null) continue
           const v = norm(g.readText(r, role))
-          if (v) vals.add(v)
+          if (/\d/.test(v)) vals.add(v)
         }
         if (vals.size > 1)
           return { error: 'mixed-classes', screen, strategy: g.source === 'cpr' ? 'cpr' : 'dom', filled: 0, cells: 0, missing: [], ambiguous: [], unmatchedStandards: [], saved: false, notes: ['여러 반이 섞인 명단입니다. 반을 하나만 조회한 뒤 다시 실행하세요.'] }
@@ -961,7 +996,8 @@
     // 학기말종합의견: 화면에서 고른 과목이 데이터 과목과 다르면 입력하지 않습니다
     if (screen === '학기말종합의견' && job.subject) {
       const label = screenSubjectLabel(g)
-      if (label && !norm(label).includes(norm(job.subject)))
+      const wantSubject = stripParen(job.subject)
+      if (label && wantSubject && !label.includes(wantSubject) && !wantSubject.includes(label))
         return { error: 'subject-mismatch', screen, strategy: g.source === 'cpr' ? 'cpr' : 'dom', filled: 0, cells: 0, missing: [], ambiguous: [], unmatchedStandards: [], saved: false, notes: ['화면 과목과 데이터 과목이 다름'] }
     }
 
@@ -974,14 +1010,18 @@
       rowNum.push(single ? v : last)
     }
 
-    // 같은 번호가 떨어져서 다시 나오면(다른 반 등) 건너뜀. 한 행 화면은 두 번 이상 나오면 건너뜀
+    // 같은 학생의 같은 칸이 두 번 나오면(다른 반 등) 그 번호는 건너뜀
+    // 교과평가: (번호, 성취기준 코드), 학생부자료기록: (번호, 영역), 한 행 화면: 번호
     const ambiguous = new Set()
-    const runs = new Map()
+    const seenKeys = new Set()
     rowNum.forEach((k, r) => {
-      if (k == null) return
-      if (single || r === 0 || rowNum[r - 1] !== k) runs.set(k, (runs.get(k) || 0) + 1)
+      if (k == null || !want.has(k)) return
+      let key = String(k)
+      if (screen === '교과평가') key += '|' + rowStdKey(g.readText(r, 'standard'))
+      else if (screen === '학생부자료기록') key += '|' + norm(g.readText(r, 'area'))
+      if (seenKeys.has(key)) ambiguous.add(k)
+      seenKeys.add(key)
     })
-    for (const [k, c] of runs) if (c > 1 && want.has(k)) ambiguous.add(k)
     if (ambiguous.size) notes.push(`번호가 여러 곳에 있어 건너뜀: ${[...ambiguous].sort((x, y) => x - y).join(', ')} (반이 다른 학생일 수 있음)`)
 
     // 작업 목록

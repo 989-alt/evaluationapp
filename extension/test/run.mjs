@@ -263,6 +263,51 @@ for (const screen of ['교과평가', '학생부자료기록']) {
   ok(!good.error && good.filled === 3, '과목 같음: 입력', good)
 }
 
+// 과목 확인: 낱말 전체 비교, 괄호 무시, 과목이 0개·여러 개면 막지 않음, "과목" 이름표 콤보 우선
+{
+  console.log('[엔진] 학기말종합의견 · 과목 비교 규칙')
+  const semFill = async (query, subject) => {
+    await page.goto(MOCK('학기말종합의견') + query)
+    await page.addScriptTag({ path: ENGINE })
+    return page.evaluate((job) => window.__sgbNeis.fill(job), jobFor('학기말종합의견', { subject, mode: 'overwrite', save: false }))
+  }
+  let r = await semFill('&subjects=' + encodeURIComponent('국어(독서),수학'), '국어')
+  ok(!r.error && r.filled === 3, '과목: 화면 "국어(독서)" ↔ 데이터 "국어" 통과', r)
+  r = await semFill('', '국어(독서)')
+  ok(!r.error && r.filled === 3, '과목: 화면 "국어" ↔ 데이터 "국어(독서)" 통과', r)
+  r = await semFill('&nosubject=1&titles=' + encodeURIComponent('학생정보,통합조회'), '수학')
+  ok(!r.error && r.filled === 3, '과목: "학생정보"·"통합조회" 제목만 있으면 막지 않음', r)
+  r = await semFill('&sidemenu=1&subject=' + encodeURIComponent('수학'), '수학')
+  ok(!r.error && r.filled === 3, '과목: 과목 목록 + 수학 콤보 → 수학 입력', r)
+  r = await semFill('&sidemenu=1&subject=' + encodeURIComponent('수학'), '국어')
+  eq(r.error, 'subject-mismatch', '과목: 과목 목록 + 수학 콤보 → 국어 거부')
+}
+
+// 동아리: 합계("계") 행은 반 섞임 판단에서 뺌
+{
+  console.log('[엔진] 동아리 · 합계 행')
+  await page.goto(MOCK('동아리활동관리') + '&footer=1')
+  await page.addScriptTag({ path: ENGINE })
+  const r = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor('동아리활동관리', { mode: 'overwrite', save: false }))
+  ok(!r.error && r.filled === 3, '동아리 합계 행: 거부하지 않고 입력', r)
+}
+
+// 교과평가: 성취기준별로 묶인 표도 모두 입력 (같은 번호가 떨어져 나와도 (번호, 코드)가 다르면 정상)
+{
+  console.log('[엔진] 교과평가 · 성취기준별 묶음')
+  await page.goto(MOCK('교과평가') + '&grouped=1')
+  await page.addScriptTag({ path: ENGINE })
+  const r = await page.evaluate((job) => window.__sgbNeis.fill(job), jobFor('교과평가', { mode: 'overwrite', save: false }))
+  eq([r.filled, r.cells, r.ambiguous, r.missing], [3, 12, [], [9]], '묶음: 3명·12칸 입력, 건너뜀 없음')
+  const v = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('#grid tbody tr')).map((tr) => [Number(tr.cells[0].textContent), tr.cells[3].textContent.split(' ')[0], tr.querySelector('select').selectedOptions[0].text, tr.querySelector('input.result').value]),
+  )
+  const want = []
+  for (const [code, lv, k] of [['[6국05-01]', '잘함', '01'], ['[6국05-02]', '매우잘함', '02']])
+    for (const s of [1, 2, 3, 4]) want.push(s === 4 ? [s, code, '선택', ''] : [s, code, lv, `기준${k}-${s}`])
+  eq(v, want, '묶음: 학생·성취기준마다 맞는 칸')
+}
+
 // 입력 실패 칸이 있으면 저장하지 않음
 {
   console.log('[엔진] 입력 실패 → 저장 안 함')

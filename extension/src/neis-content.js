@@ -58,6 +58,43 @@
     }
   }
 
+  /** detect 답: 알려진 필드만 (팝업·서비스 워커가 쓰는 것) */
+  function cleanDetect(d) {
+    if (!d || typeof d !== 'object') return { error: 'no-result' }
+    if (d.error) return { error: short(d.error, 100) }
+    const strs = (v, n, cap) => (Array.isArray(v) ? v.slice(0, cap).map((x) => short(x, n)) : [])
+    return {
+      screen: short(d.screen, 20),
+      detectedScreen: short(d.detectedScreen, 20),
+      forced: d.forced === true,
+      running: d.running === true,
+      ready: d.ready === true,
+      strategy: d.strategy === 'cpr' || d.strategy === 'dom' ? d.strategy : null,
+      rows: num(d.rows),
+      cpr: d.cpr === true,
+      cprVersion: d.cprVersion == null ? null : short(d.cprVersion, 40),
+      apps: num(d.apps),
+      titleScreen: d.titleScreen == null ? null : short(d.titleScreen, 20),
+      titles: strs(d.titles, 40, 10),
+      grids: Array.isArray(d.grids)
+        ? d.grids.slice(0, 20).map((g) => ({
+            source: short(g && g.source, 20),
+            appId: g && g.appId != null ? short(g.appId, 100) : null,
+            ctrlId: g && g.ctrlId != null ? short(g.ctrlId, 100) : null,
+            rows: num(g && g.rows),
+            columns: Array.isArray(g && g.columns)
+              ? g.columns.slice(0, 60).map((c) => ({
+                  header: short(c && c.header, 60),
+                  name: c && c.name != null ? short(c.name, 100) : null,
+                  role: c && c.role != null ? short(c.role, 20) : null,
+                }))
+              : [],
+          }))
+        : [],
+      path: short(d.path, 200),
+    }
+  }
+
   function cleanResult(r) {
     if (!r || typeof r !== 'object') return { error: 'no-result' }
     const out = {
@@ -120,6 +157,7 @@
       chrome.runtime.sendMessage({ result, type: 'fill-done' }).catch(() => {})
       return result
     }
+    if (cmd === 'detect') return cleanDetect(await callEngine('detect', msg.args, TIMEOUT.detect))
     return callEngine(cmd, msg.args, TIMEOUT[cmd])
   }
 
