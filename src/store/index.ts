@@ -78,6 +78,11 @@ interface State {
   /** 지정한 종류의 기존 데이터를 지우고 새 데이터를 뒤에 붙입니다 */
   stageNeisPayloads: (kinds: NeisPayload['kind'][], payloads: NeisPayload[]) => void
 
+  /** 개인정보 검사에서 "보내도 괜찮음"으로 확인한 표현(piiKey → 확인 시각) */
+  piiConfirmed: Record<string, number>
+  confirmPII: (keys: string[]) => void
+  unconfirmPII: (keys: string[]) => void
+
   resetAll: () => void
 }
 
@@ -91,6 +96,7 @@ const defaultSettings: Settings = {
   behaviorBytes: 700,
   persistResults: true,
   guideSeen: false,
+  paidKeyConfirmed: false,
 }
 
 export const useStore = create<State>()(
@@ -181,6 +187,21 @@ export const useStore = create<State>()(
       setNeisPayloads: (neisPayloads) => set({ neisPayloads }),
       stageNeisPayloads: (kinds, payloads) =>
         set((s) => ({ neisPayloads: [...s.neisPayloads.filter((p) => !kinds.includes(p.kind)), ...payloads] })),
+
+      piiConfirmed: {},
+      confirmPII: (keys) =>
+        set((s) => {
+          const now = Date.now()
+          const next = { ...s.piiConfirmed }
+          for (const k of keys) next[k] = now
+          return { piiConfirmed: next }
+        }),
+      unconfirmPII: (keys) =>
+        set((s) => {
+          const next = { ...s.piiConfirmed }
+          for (const k of keys) delete next[k]
+          return { piiConfirmed: next }
+        }),
 
       resetAll: () => {
         localStorage.removeItem('saenggibu-v2')

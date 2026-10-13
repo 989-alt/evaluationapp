@@ -28,6 +28,7 @@ export interface CreativeArea {
 export interface EvalPlan {
   id: string
   title: string
+  /** 예전 버전에서 추출한 학교명. 지금은 추출하지 않고 화면에도 보이지 않습니다 */
   school?: string
   grade?: string
   semester?: string
@@ -60,6 +61,8 @@ export interface Settings {
   subjectBytes?: number
   persistResults: boolean
   guideSeen: boolean
+  /** Google 키가 결제 계정이 연결된(유료) Cloud 프로젝트의 키임을 사용자가 확인함 */
+  paidKeyConfirmed?: boolean
 }
 
 // 방식 A 결과

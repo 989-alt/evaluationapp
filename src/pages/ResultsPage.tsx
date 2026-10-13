@@ -8,6 +8,7 @@ import { downloadXlsx, uniqueSheetName } from '@/lib/excel'
 import { buildSubjectPayloads, neisByteLimit } from '@/lib/neis'
 import { flatten, hash, neisBytes, splitSentences } from '@/lib/text'
 import { ModeSwitch } from './CommentsPage'
+import { PIIGate, standardItems, usePIIGate } from '@/components/PIIGate'
 import { LEVEL_SHORT, type Standard, type StudentResult, type SubjectComment } from '@/lib/types'
 
 type View = 'student' | 'subject'
@@ -128,6 +129,14 @@ export default function ResultsPage() {
 
   const curSubj = subj && subjects.includes(subj) ? subj : (subjects[0] ?? null)
 
+  // 개인정보 검사: 다시 생성할 때 보내는 성취기준(성적이 입력된 것)
+  const grades = useStore((s) => s.grades)
+  const piiItems = useMemo(() => {
+    const used = new Set(Object.values(grades).flatMap((row) => Object.keys(row ?? {})))
+    return standardItems((plan?.standards ?? []).filter((s) => used.has(s.id)))
+  }, [plan, grades])
+  const gate = usePIIGate(piiItems)
+
   // 학생 칩 → 학생별 보기에서 해당 카드로 스크롤
   useEffect(() => {
     if (pendingScroll.current === null || view !== 'student') return
@@ -148,6 +157,10 @@ export default function ResultsPage() {
     const st = useStore.getState()
     if (!buildStudentInput(plan, st.grades, n).length) return toast(`${n}번은 입력된 성취 수준이 없습니다`)
     if (genState.getSnapshot().running) return toast('이미 평어를 생성하고 있습니다. 끝난 뒤 다시 시도하세요.')
+    if (!gate.ok) {
+      document.getElementById('pii-gate')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return toast('개인정보로 보이는 표현을 먼저 확인해 주세요')
+    }
     const prev = st.results.find((r) => r.student === n)
     if (prev?.subjects.some((sc) => sc.edited) && !confirm(`${n}번에는 직접 수정한 문단이 있습니다. 다시 생성하면 수정한 내용이 바뀝니다. 계속할까요?`)) return
     if (editing?.student === n) setEditing(null)
@@ -365,6 +378,7 @@ export default function ResultsPage() {
     <>
       {header}
       {progressCard}
+      {plan && <PIIGate gate={gate} what="다시 생성" />}
       {!plan && <Alert kind="warn">활성 평가계획이 없어 다시 생성은 할 수 없습니다. 성취기준 코드는 저장된 평가계획에서 찾아 표시합니다. <Link to="/plan" className="underline font-bold">평가계획</Link></Alert>}
       {errResults.length > 0 && !gen.running && (
         <Alert kind="error">

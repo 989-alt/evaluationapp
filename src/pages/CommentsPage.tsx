@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Alert, Card, CopyText, PageHeader, Spinner, toast } from '@/components/ui'
+import { PIIGate, standardItems, usePIIGate } from '@/components/PIIGate'
 import { useActivePlan, useClient, useStore } from '@/store'
 import { asArray, generateJSON } from '@/llm/provider'
 import { modeAPrompt, SYSTEM_TEACHER } from '@/llm/prompts'
@@ -46,10 +47,13 @@ export default function CommentsPage() {
   const chosen = stds.filter((s) => sel.has(s.id))
   const manualStds = selected.filter((id) => id.startsWith('manual:')).map((id) => ({ id, subject: '직접 입력', code: '', text: id.slice(7), criteria: ['', '', '', ''] as [string, string, string, string] }))
   const allChosen = [...chosen, ...manualStds]
+  // 개인정보 검사: 고른 성취기준(직접 입력 포함)의 본문·평가 요소·기준 문장
+  const gate = usePIIGate(standardItems(allChosen))
 
   const run = async () => {
     if (!client) return setError('설정에서 API 키와 모델을 먼저 선택하세요.')
     if (!allChosen.length) return setError('성취기준을 하나 이상 선택하세요.')
+    if (!gate.ok) return setError('개인정보로 보이는 표현을 먼저 확인해 주세요.')
     setError('')
     const acc: ModeAResult[] = []
     try {
@@ -145,8 +149,9 @@ export default function CommentsPage() {
             </div>
             <label className="flex gap-2 items-center text-[13px]"><input type="checkbox" checked={two} onChange={(e) => setTwo(e.target.checked)} className="w-4 h-4 accent-ink" />성취기준당 2문장으로</label>
             <div className="text-[12px] text-muted pt-2.5 border-t border-line">{allChosen.length}개 × {total}문장 = {allChosen.length * total}문장 · 요청 {allChosen.length}회</div>
+            {!gate.ok && <div className="text-[12px]"><mark className="pii">확인 필요</mark> 아래 카드에서 개인정보로 보이는 표현을 확인해 주세요</div>}
             {error && <Alert kind="error">{error}</Alert>}
-            <button type="button" className="btn-primary !py-3.5 text-[15px]" onClick={run} disabled={!!busy}>{busy ? <><Spinner /> {busy}</> : '평어 생성'}</button>
+            <button type="button" className="btn-primary !py-3.5 text-[15px]" onClick={run} disabled={!!busy || !gate.ok} title={gate.ok ? undefined : '아래의 개인정보 확인을 먼저 해 주세요'}>{busy ? <><Spinner /> {busy}</> : '평어 생성'}</button>
           </Card>
           <Card className="px-6 py-5 text-[13px] flex flex-col gap-2">
             <div className="eyebrow">항상 적용되는 규칙</div>
@@ -159,6 +164,8 @@ export default function CommentsPage() {
           </Card>
         </div>
       </div>
+
+      <PIIGate gate={gate} />
 
       {results.length > 0 && (
         <Card className="overflow-hidden">

@@ -40,7 +40,7 @@ export function normalizePlan(raw: RawPlan, fileName: string): EvalPlan {
   return {
     id: uid(),
     title,
-    school: raw.school ? String(raw.school) : undefined,
+    // 학교명은 저장하지 않습니다(개인정보 보호). 모델이 채워 보내도 버립니다
     grade, semester: sem,
     createdAt: Date.now(),
     standards,

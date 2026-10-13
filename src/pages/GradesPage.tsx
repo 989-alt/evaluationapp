@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import { Link, useNavigate } from 'react-router-dom'
 import { Alert, Card, PageHeader, Progress, Spinner, toast } from '@/components/ui'
 import { ModeSwitch } from './CommentsPage'
+import { PIIGate, standardItems, usePIIGate } from '@/components/PIIGate'
 import { useActivePlan, useClient, useStore } from '@/store'
 import { abortGeneration, generateStudents, useGenState } from '@/llm/generateModeB'
 import { subjectsOf } from '@/lib/plan'
@@ -113,6 +114,14 @@ export default function GradesPage() {
   // 이어서 생성은 처음 실행한 문장 수를 따릅니다
   const runSentences = results.find((r) => !r.error && r.sentences && entered.includes(r.student))?.sentences
   const liveChecked = [...checked].filter((n) => n <= N)
+
+  // 개인정보 검사: 입력된 학생들의 성적에 쓰인 성취기준(본문·평가 요소·영역·기준 문장)과 교과명
+  const sentStds = useMemo(() => {
+    const used = new Set(entered.flatMap((n) => Object.keys(grades[n] ?? {})))
+    return ordered.filter((s) => used.has(s.id))
+  }, [ordered, grades, entered])
+  const piiItems = useMemo(() => standardItems(sentStds), [sentStds])
+  const gate = usePIIGate(piiItems)
 
   // 학생 수가 줄면 선택 목록에서 범위 밖 번호 제거
   useEffect(() => {
@@ -255,6 +264,10 @@ export default function GradesPage() {
     if (!plan) return
     if (!client) return setError('설정에서 API 키와 모델을 먼저 선택하세요.')
     if (gen.running) return setError('이미 생성 중입니다.')
+    if (!gate.ok) {
+      document.getElementById('pii-gate')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return setError('개인정보로 보이는 표현을 먼저 확인해 주세요.')
+    }
     const targets = list.filter((n) => doneOf(n) > 0)
     if (!targets.length) return setError('수준을 하나 이상 입력한 학생이 없습니다.')
     const st = useStore.getState()
@@ -492,6 +505,8 @@ export default function GradesPage() {
         </div>
       )}
 
+      <PIIGate gate={gate} />
+
       {/* 하단 고정 바 */}
       <div className="sticky bottom-4 z-20 bg-ink text-white rounded-[20px] px-6 py-4 flex flex-wrap items-center gap-x-5 gap-y-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)]">
         {gen.running ? (
@@ -509,6 +524,7 @@ export default function GradesPage() {
             <div className="flex-1 min-w-[220px]">
               <div className="font-bold">생성 준비</div>
               <div className="text-[12px] text-white/60">미선택 성취기준은 건너뜀 · 학생 1명당 요청 1회 · 번호만 전송 · 학생 간 문장 중복 없음</div>
+              {!gate.ok && <div className="text-[12px] mt-1"><mark className="pii">확인 필요</mark> 위 카드에서 개인정보로 보이는 표현을 확인하면 생성할 수 있습니다</div>}
               {failed > 0 && <div className="text-[12px] text-accent mt-1">오류가 난 학생 {failed}명 · "이어서 생성"으로 다시 시도할 수 있습니다</div>}
               {error && <div className="text-[12px] text-accent mt-1">{error} {!client && <Link to="/settings" className="underline">설정으로 가기</Link>}</div>}
             </div>
@@ -520,16 +536,16 @@ export default function GradesPage() {
               성취기준당 2문장
             </label>
             {view === 'student' && (
-              <button type="button" className="btn !bg-transparent !text-white !border-white/30 hover:!border-white" disabled={doneOf(student) === 0} onClick={() => start([student])}>
+              <button type="button" className="btn !bg-transparent !text-white !border-white/30 hover:!border-white" disabled={doneOf(student) === 0 || !gate.ok} onClick={() => start([student])}>
                 이 학생만 생성
               </button>
             )}
             {canResume && (
-              <button type="button" className="btn !bg-transparent !text-white !border-white/30 hover:!border-white" onClick={() => start(remaining, false, runSentences ?? (two ? 2 : 1))} title={failed ? `오류 ${failed}명 포함` : undefined}>
+              <button type="button" className="btn !bg-transparent !text-white !border-white/30 hover:!border-white" disabled={!gate.ok} onClick={() => start(remaining, false, runSentences ?? (two ? 2 : 1))} title={failed ? `오류 ${failed}명 포함` : undefined}>
                 이어서 생성 (남은 {remaining.length}명{runSentences ? ` · ${runSentences}문장` : ''})
               </button>
             )}
-            <button type="button" className="btn-accent" disabled={!entered.length} onClick={() => start(entered)}>입력된 {entered.length}명 평어 생성</button>
+            <button type="button" className="btn-accent" disabled={!entered.length || !gate.ok} title={gate.ok ? undefined : '위의 개인정보 확인을 먼저 해 주세요'} onClick={() => start(entered)}>입력된 {entered.length}명 평어 생성</button>
           </>
         )}
       </div>

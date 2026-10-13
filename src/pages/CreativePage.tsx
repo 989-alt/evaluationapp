@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Alert, Card, CopyText, IssueList, PageHeader, Spinner, toast } from '@/components/ui'
+import { PIIGate, usePIIGate } from '@/components/PIIGate'
 import { useActivePlan, useClient, useStore } from '@/store'
 import { asArray, generateJSON } from '@/llm/provider'
 import { creativePrompt, SYSTEM_TEACHER } from '@/llm/prompts'
@@ -65,11 +66,14 @@ export default function CreativePage() {
 
   const filled = inputs.map((x) => ({ text: flatten(x.text), count: clampCount(x.count) })).filter((x) => x.text)
   const totalWanted = filled.reduce((a, x) => a + x.count, 0)
+  // 개인정보 검사: AI로 보내는 원문 문장
+  const gate = usePIIGate(filled.map((x, i) => ({ label: `원문 ${inputs.findIndex((y) => flatten(y.text) === x.text) + 1 || i + 1}`, text: x.text })))
 
   const generate = async () => {
     if (running) return
     if (!client) return setError('설정에서 API 키와 모델을 먼저 선택하세요.')
     if (!filled.length) return setError('원문 문장을 하나 이상 입력하세요.')
+    if (!gate.ok) return setError('개인정보로 보이는 표현을 먼저 확인해 주세요.')
     setError('')
     const ctrl = new AbortController()
     abortRef.current = ctrl
@@ -333,6 +337,8 @@ export default function CreativePage() {
         </Card>
       )}
 
+      <PIIGate gate={gate} what="변형 문장 생성" />
+
       {/* 하단 고정 바 */}
       <div className="sticky bottom-4 z-20 bg-ink text-white rounded-[20px] px-6 py-4 flex flex-wrap items-center gap-x-5 gap-y-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)]">
         {running ? (
@@ -349,8 +355,9 @@ export default function CreativePage() {
             <div className="flex-1 min-w-[220px]">
               <div className="font-bold">생성 준비</div>
               <div className="text-[12px] text-white/60">원문 {filled.length}개 × 지정 개수 = {totalWanted}문장 · 요청 1회 · 학생 정보는 전송하지 않음</div>
+              {!gate.ok && <div className="text-[12px] mt-1"><mark className="pii">확인 필요</mark> 위 카드에서 개인정보로 보이는 표현을 확인하면 생성할 수 있습니다</div>}
             </div>
-            <button type="button" className="btn-accent" disabled={!filled.length} onClick={generate}>변형 문장 {totalWanted}개 생성</button>
+            <button type="button" className="btn-accent" disabled={!filled.length || !gate.ok} onClick={generate}>변형 문장 {totalWanted}개 생성</button>
           </>
         )}
       </div>

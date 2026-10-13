@@ -4,6 +4,7 @@ import { Alert, Card, PageHeader, Spinner, toast } from '@/components/ui'
 import { useStore, modelsByTier } from '@/store'
 import { detectProvider, listModels, PROVIDER_LABEL, PROVIDER_PDF } from '@/llm/provider'
 import type { ModelInfo, Provider } from '@/lib/types'
+import type { PIISelfTestResult } from '@/lib/pii.selftest'
 
 const TIER_LABEL: Record<NonNullable<ModelInfo['tier']>, string> = { recommended: '권장', fast: '빠름 · 저렴', best: '최고 품질 · 느림', other: '나머지' }
 const TIER_PILL: Record<NonNullable<ModelInfo['tier']>, string> = { recommended: 'bg-ink text-white', fast: 'lv-0', best: 'lv-2', other: 'bg-ground text-muted' }
@@ -17,6 +18,11 @@ export default function SettingsPage() {
   const [error, setError] = useState('')
   const [manual, setManual] = useState<Provider | null>(null)
   const [bytesDraft, setBytesDraft] = useState(String(settings.behaviorBytes))
+  const [selfTest, setSelfTest] = useState<PIISelfTestResult | null>(null)
+  const runSelfTest = async () => {
+    const { runPIISelfTest } = await import('@/lib/pii.selftest')
+    setSelfTest(runPIISelfTest())
+  }
   useEffect(() => setBytesDraft(String(settings.behaviorBytes)), [settings.behaviorBytes])
   const commitBytes = () => {
     const n = Number(bytesDraft)
@@ -30,7 +36,12 @@ export default function SettingsPage() {
 
   const onKey = (v: string) => {
     const p = detectProvider(v)
-    setSettings({ apiKey: v.trim(), provider: p ?? manual, models: p === settings.provider ? settings.models : [], model: p === settings.provider ? settings.model : '' })
+    const changed = v.trim() !== settings.apiKey
+    setSettings({
+      apiKey: v.trim(), provider: p ?? manual, models: p === settings.provider ? settings.models : [], model: p === settings.provider ? settings.model : '',
+      // 키가 바뀌면 "결제가 연결된 유료 키" 확인도 다시 받습니다
+      ...(changed ? { paidKeyConfirmed: false } : {}),
+    })
     setError('')
   }
 
@@ -117,12 +128,14 @@ export default function SettingsPage() {
             <details className="text-[13px] text-muted">
               <summary className="cursor-pointer text-ink font-medium">키는 어디서 받나요?</summary>
               <div className="pt-2 flex flex-col gap-1">
-                <span><a className="underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a> → API 키 만들기 (무료 할당량)</span>
+                <span><a className="underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a> → API 키 만들기 (학생 자료에는 결제를 연결한 프로젝트의 키를 권장)</span>
                 <span><a className="underline" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">Anthropic Console</a> → API Keys</span>
                 <span><a className="underline" href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">OpenAI Platform</a> → API keys</span>
               </div>
             </details>
           </Card>
+
+          <DataUseNotice provider={provider} paid={!!settings.paidKeyConfirmed} onPaid={(v) => setSettings({ paidKeyConfirmed: v })} />
 
           <Card className="overflow-hidden">
             <div className="px-6 pt-5 pb-3 flex flex-wrap items-center gap-2.5">
@@ -154,17 +167,27 @@ export default function SettingsPage() {
           <Card className="p-6 flex flex-col gap-3">
             <div className="eyebrow">제공사 비교</div>
             <div className="flex flex-col gap-2 text-[13px]">
-              <div className={`rounded-[14px] bg-ground p-3.5 ${provider === 'google' ? 'border-[1.5px] border-ink' : ''}`}><div className="font-bold">Google Gemini</div><div className="text-muted">무료 할당량 · PDF 직접 입력</div></div>
-              <div className={`rounded-[14px] bg-ground p-3.5 ${provider === 'anthropic' ? 'border-[1.5px] border-ink' : ''}`}><div className="font-bold">Anthropic Claude</div><div className="text-muted">한국어 문장 품질 우수 · PDF 직접 입력 · 유료</div></div>
-              <div className={`rounded-[14px] bg-ground p-3.5 ${provider === 'openai' ? 'border-[1.5px] border-ink' : ''}`}><div className="font-bold">OpenAI GPT</div><div className="text-muted">유료 · PDF는 앱이 텍스트로 변환해 전송</div></div>
+              <div className={`rounded-[14px] bg-ground p-3.5 ${provider === 'google' ? 'border-[1.5px] border-ink' : ''}`}><div className="font-bold">Google Gemini</div><div className="text-muted">무료 할당량(무료 키는 입력이 제품 개선에 쓰임) · PDF 직접 입력</div></div>
+              <div className={`rounded-[14px] bg-ground p-3.5 ${provider === 'anthropic' ? 'border-[1.5px] border-ink' : ''}`}><div className="font-bold">Anthropic Claude</div><div className="text-muted">한국어 문장 품질 우수 · PDF 직접 입력 · 유료 · 학습에 쓰지 않음</div></div>
+              <div className={`rounded-[14px] bg-ground p-3.5 ${provider === 'openai' ? 'border-[1.5px] border-ink' : ''}`}><div className="font-bold">OpenAI GPT</div><div className="text-muted">유료 · PDF는 앱이 텍스트로 변환해 전송 · 학습에 쓰지 않음</div></div>
             </div>
           </Card>
 
           <Card className="p-6 flex flex-col gap-3">
             <Step n={3} title="개인정보" />
             <label className="flex gap-2.5 items-start text-[13px]"><input type="checkbox" checked disabled className="mt-0.5 w-4 h-4 accent-ink" /><span><strong>학생 이름 대신 출석번호만 전송</strong><span className="block text-muted">평어 · 행발 · 창체 모두. 끌 수 없습니다.</span></span></label>
+            <label className="flex gap-2.5 items-start text-[13px]"><input type="checkbox" checked disabled className="mt-0.5 w-4 h-4 accent-ink" /><span><strong>보내기 전 개인정보 검사</strong><span className="block text-muted">이름·연락처·학교명 같은 표현을 <mark className="pii">확인 필요</mark>로 보여 주고, 확인해야 생성합니다. AI를 쓰지 않고 이 브라우저에서 검사합니다.</span></span></label>
             <label className="flex gap-2.5 items-start text-[13px]"><input type="checkbox" checked={settings.persistResults} onChange={(e) => setSettings({ persistResults: e.target.checked })} className="mt-0.5 w-4 h-4 accent-ink" /><span>생성 결과를 이 브라우저에 저장 (새로고침해도 유지)<span className="block text-muted">나이스로 보낸 데이터는 확장이 읽어야 하므로 항상 저장됩니다.</span></span></label>
             <button type="button" className="btn btn-sm self-start text-lv3-ink" onClick={() => { if (confirm('평가계획, 성적, 결과, API 키를 모두 지웁니다. 계속할까요?')) resetAll() }}>이 브라우저의 모든 데이터 지우기</button>
+            <div className="text-[12px] text-muted flex flex-col gap-1.5 pt-2.5 border-t border-line">
+              <button type="button" className="self-start underline cursor-pointer" onClick={() => void runSelfTest()}>개인정보 검사기 자가 점검</button>
+              {selfTest && (
+                <div className={selfTest.failed ? 'text-lv3-ink' : 'text-lv0-ink'}>
+                  <b>통과 {selfTest.passed} · 실패 {selfTest.failed}</b> (일반 문장 {selfTest.negatives.total}개 중 오탐 {selfTest.negatives.falsePositives} · 개인정보 예시 {selfTest.positives.total}개 중 놓침 {selfTest.positives.missed})
+                  {selfTest.details.map((d, i) => <div key={i} className="break-all">{d}</div>)}
+                </div>
+              )}
+            </div>
           </Card>
 
           <Card className="p-6 flex flex-col gap-3">
@@ -185,6 +208,46 @@ export default function SettingsPage() {
         <Link to="/plan" className="btn-primary">저장하고 평가계획으로 →</Link>
       </div>
     </>
+  )
+}
+
+const LINK = 'underline font-bold'
+
+/** 선택한 제공사가 API 입력을 어떻게 쓰는지(2026-10-13 확인). README "개인정보"에 근거와 날짜가 있습니다 */
+function DataUseNotice({ provider, paid, onPaid }: { provider: Provider | null; paid: boolean; onPaid: (v: boolean) => void }) {
+  return (
+    <Card className="p-6 flex flex-col gap-3" id="data-use">
+      <div className="eyebrow">제공사의 데이터 사용</div>
+      {provider === 'google' ? (
+        <>
+          <div className="rounded-[12px] pii-note px-4 py-3.5 text-[13px] leading-[1.65]">
+            <div className="font-bold text-[14px] mb-1"><mark className="pii">주의</mark> 결제 계정이 연결되지 않은 무료 키는 입력 내용이 Google 제품 개선에 쓰이고 사람이 검토할 수 있습니다. 결제가 연결된 Cloud 프로젝트의 키를 쓰세요.</div>
+            결제가 연결된(유료) 키는 프롬프트와 응답을 제품 개선에 쓰지 않고, 남용 감시를 위해 제한된 기간만 기록합니다.{' '}
+            <a className={LINK} href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noreferrer">Gemini API 추가 약관</a>
+            <span className="block text-muted mt-1">2026-04-01부터 무료 등급에서는 Pro 모델을 쓸 수 없습니다.</span>
+          </div>
+          <label className="flex gap-2.5 items-start text-[13px] cursor-pointer">
+            <input type="checkbox" checked={paid} onChange={(e) => onPaid(e.target.checked)} className="mt-0.5 w-4 h-4 accent-ink" />
+            <span><strong>결제가 연결된 유료 키입니다</strong><span className="block text-muted">체크하지 않으면 생성 화면에 노란 안내가 한 줄 보입니다(생성은 막지 않음). 키를 바꾸면 다시 확인합니다.</span></span>
+          </label>
+        </>
+      ) : provider === 'anthropic' ? (
+        <div className="rounded-[12px] bg-surface-2 px-4 py-3.5 text-[13px] leading-[1.65]">
+          <b>학습에 사용하지 않음(기본)</b> · 입력·출력은 기본 30일 안에 삭제됩니다(남용 감시 등 예외는 더 오래 보관될 수 있고, 일부 최신 모델은 안전 목적 제한 보관·검토 대상).{' '}
+          <a className={LINK} href="https://www.anthropic.com/legal/commercial-terms" target="_blank" rel="noreferrer">상용 약관</a> ·{' '}
+          <a className={LINK} href="https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-personal-data" target="_blank" rel="noreferrer">보관 기간</a>
+        </div>
+      ) : provider === 'openai' ? (
+        <div className="rounded-[12px] bg-surface-2 px-4 py-3.5 text-[13px] leading-[1.65]">
+          <b>학습에 사용하지 않음(기본)</b> · 직접 동의하지 않는 한 API 데이터로 모델을 학습하지 않으며, 남용 감시 목적으로 최대 30일 보관합니다.{' '}
+          <a className={LINK} href="https://developers.openai.com/api/docs/guides/your-data" target="_blank" rel="noreferrer">Your data 안내</a>
+        </div>
+      ) : (
+        <div className="text-[13px] text-muted leading-[1.65]">
+          키를 넣으면 그 제공사의 정책을 보여 줍니다. 요약: Anthropic·OpenAI는 API 입력을 기본적으로 학습에 쓰지 않고 남용 감시 목적으로 최대 30일 보관합니다. Google은 결제가 연결된 키만 제품 개선에 쓰지 않습니다.
+        </div>
+      )}
+    </Card>
   )
 }
 
