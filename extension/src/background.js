@@ -155,6 +155,8 @@ async function scan(tabId) {
   const per = Math.max(24 * 1024, Math.floor((SCAN_MAX_BYTES - 4096) / Math.max(1, frames.length)))
   const results = await Promise.all(frames.map(async (f) => ({ frameId: f.frameId, scan: await frameCall(tabId, f.frameId, 'scan', { maxBytes: per }) })))
   let list = results.filter((r) => r.scan && !r.scan.error)
+  // 엔진이 예전 버전인 탭(업데이트 후 새로고침 안 함): 빈 파일 대신 오류
+  if (!list.length && results.some((r) => r.scan && r.scan.error === 'engine-outdated')) return { error: 'engine-outdated' }
   const out = {
     kind: 'sgb-neis-scan',
     version: 1,

@@ -84,6 +84,7 @@
       forced: d.forced === true,
       running: d.running === true,
       ready: d.ready === true,
+      blocked: d.blocked == null ? null : short(d.blocked, 40),
       strategy: strategy(d.strategy),
       knownApp: d.knownApp === true,
       activeApp: appIdStr(d.activeApp),
@@ -124,6 +125,7 @@
       rows: num(r.rows),
       cells: num(r.cells),
       skipped: num(r.skipped),
+      levelConflict: num(r.levelConflict),
       autoFilled: num(r.autoFilled),
       verifyFailed: num(r.verifyFailed),
       failed: num(r.failed),
@@ -132,6 +134,7 @@
       ambiguous: ints(r.ambiguous),
       unmatchedStandards: cleanUnmatched(r.unmatchedStandards),
       notes: Array.isArray(r.notes) ? r.notes.slice(0, 20).map((x) => short(x, 300)) : [],
+      warnings: strs(r.warnings, 60, 10),
       saved: r.saved === true,
       aborted: r.aborted === true,
     }
@@ -177,6 +180,10 @@
       cells: num(r.cells),
       levelCodes: codes(r.levelCodes),
       resultAutoFill: typeof r.resultAutoFill === 'boolean' ? r.resultAutoFill : null,
+      levelSideColumns:
+        r.levelSideColumns && typeof r.levelSideColumns === 'object'
+          ? Object.fromEntries(['rows', 'evlCtrNm', 'evlLvlCd', 'evlLvlNm'].filter((k) => Number.isInteger(r.levelSideColumns[k])).map((k) => [k, r.levelSideColumns[k]]))
+          : null,
       warnings: strs(r.warnings, 60, 20),
       notes: strs(r.notes, 300, 20),
     }
@@ -185,6 +192,48 @@
   }
 
   /** 엔진 상태: 'ok' | 'old'(예전 버전) | null(없음) */
+  // ---------- 구조 수집의 known 부분 모양 확인 (페이지가 같은 창에 메시지를 보낼 수 있으므로 알려진 모양만 남김) ----------
+  const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+  const scalar = (v, n) => (typeof v === 'number' || typeof v === 'boolean' ? v : v == null ? null : short(v, n))
+  const flatObj = (v, n, cap) => (isObj(v) ? Object.fromEntries(Object.entries(v).slice(0, cap).map(([k, x]) => [short(k, 40), scalar(x, n)])) : {})
+  const objList = (v, cap, f) => (Array.isArray(v) ? v.slice(0, cap).map((x) => (isObj(x) ? f(x) : null)) : [])
+  function cleanKnown(k) {
+    if (!isObj(k)) return null
+    if (k.error) return { error: short(k.error, 40) }
+    const api = {}
+    if (isObj(k.api)) for (const [name, list] of Object.entries(k.api).slice(0, 20)) api[short(name, 20)] = strs(list, 40, 150)
+    return {
+      activeApp: appIdStr(k.activeApp),
+      activeScreen: k.activeScreen == null ? null : short(k.activeScreen, 20),
+      how: k.how == null ? null : short(k.how, 20),
+      warnings: strs(k.warnings, 60, 10),
+      mdiSelected: k.mdiSelected == null ? null : short(k.mdiSelected, 100),
+      apps: objList(k.apps, 20, (a) => ({
+        id: appIdStr(a.id),
+        screen: short(a.screen, 20),
+        visible: typeof a.visible === 'boolean' ? a.visible : null,
+        via: a.via == null ? null : short(a.via, 40),
+        rows: num(a.rows),
+        gridUuid: a.gridUuid == null ? null : short(a.gridUuid, 40),
+        missingColumns: strs(a.missingColumns, 40, 20),
+        headerProps: flatObj(a.headerProps, 40, 40),
+        detailProps: flatObj(a.detailProps, 40, 40),
+        headerCols: objList(a.headerCols, 60, (c) => flatObj(c, 40, 4)),
+        detailCols: objList(a.detailCols, 60, (c) => flatObj(c, 40, 3)),
+        levelComboItems: Array.isArray(a.levelComboItems) ? objList(a.levelComboItems, 30, (it) => ({ label: short(it.label, 20), value: short(it.value, 40) })) : null,
+        datasetSample: objList(a.datasetSample, 3, (row) => flatObj(row, 40, 40)),
+        rowStates: Array.isArray(a.rowStates) ? a.rowStates.slice(0, 3).map((x) => scalar(x, 20)) : [],
+      })),
+      api,
+    }
+  }
+  function cleanScan(r) {
+    if (!isObj(r)) return { error: 'no-result' }
+    if (r.error) return { error: short(r.error, 100) }
+    if ('known' in r) return { ...r, known: cleanKnown(r.known) }
+    return r
+  }
+
   async function enginePresent(ms = TIMEOUT.ping) {
     const r = await callEngine('ping', null, ms)
     if (!(r && r.ok)) return null
@@ -225,7 +274,7 @@
     }
     if (cmd === 'detect') return cleanDetect(await callEngine('detect', msg.args, TIMEOUT.detect))
     if (cmd === 'inspect') return cleanInspect(await callEngine('inspect', msg.args, TIMEOUT.inspect))
-    return callEngine(cmd, msg.args, TIMEOUT[cmd])
+    return cleanScan(await callEngine(cmd, msg.args, TIMEOUT[cmd]))
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

@@ -286,11 +286,18 @@
         .filter(Boolean)
         .map((it) => ({ label: asStr(prop(it, 'label')) || asStr(call(it, 'getLabel')), value: asStr(prop(it, 'value')) || asStr(call(it, 'getValue')) }))
     }
+    /** 단계는 콤보 항목에 있는 값만 (없으면 null: 글자를 그대로 넣어 짐작하지 않음) */
     const valueFor = (role, value) => {
       if (role !== 'level') return { value, alt: null }
       const items = comboItems(role)
       const hit = items.find((it) => norm(it.label) === norm(value)) || items.find((it) => norm(it.value) === norm(value))
-      return hit ? { value: hit.value, alt: hit.label } : { value, alt: null }
+      return hit && hit.value !== '' ? { value: hit.value, alt: hit.label } : null
+    }
+    const colNames = cprColumnNames(grid)
+    const dsRead = (r, col) => {
+      if (!colNames.includes(col) || PERSONAL.has(col)) return ''
+      const v = isFn(ds, 'getValue') ? call(ds, 'getValue', r, col) : call(grid, 'getCellValue', r, col)
+      return v == null ? '' : String(v)
     }
     return {
       source: 'cpr',
@@ -298,9 +305,30 @@
       id: ctrlId(grid),
       headers,
       headerColumns: info.map((h) => h.column || null),
-      columns: cprColumnNames(grid),
+      columns: colNames,
       roles: Object.fromEntries(Object.entries(roles).map(([k, v]) => [k, v.column])),
       has: (role) => !!roles[role],
+      /** 단계 글자 → 콤보 코드 확인 (못 찾은 글자 목록) */
+      prepareLevels(tasks) {
+        const missing = new Set()
+        for (const t of tasks) for (const c of t.cells) if (c.role === 'level' && !valueFor('level', c.value)) missing.add(oneLine(c.value))
+        return [...missing]
+      },
+      /** 마감 열(ddlnYn/msDdlnYn)이 데이터셋에 있으면 확인 */
+      closedRow: (r) => ['ddlnYn', 'msDdlnYn'].some((c) => norm(dsRead(r, c)).toUpperCase() === 'Y'),
+      /** 과목 열(sbjtCdNm/sbjtNm)이 데이터셋에 있으면 행마다 같은 과목 하나 */
+      subjectLabel() {
+        const col = ['sbjtCdNm', 'sbjtNm'].find((c) => colNames.includes(c))
+        if (!col) return null
+        const set = new Set()
+        const n = rowCount()
+        for (let r = 0; r < n && r < 2000; r++) {
+          const v = stripParen(dsRead(r, col))
+          if (v) set.add(v)
+          if (set.size > 1) return null
+        }
+        return set.size === 1 ? [...set][0] : null
+      },
       rowCount,
       readNumber: (r) => lastInt(raw(r, 'number')),
       readText: (r, role) => raw(r, role),
@@ -308,7 +336,9 @@
       async write(r, role, value) {
         if (!roles[role] || role === 'name' || role === 'number' || PERSONAL.has(roles[role].column)) return false
         const col = roles[role].column
-        const { value: v } = valueFor(role, value)
+        const vf = valueFor(role, value)
+        if (!vf) return false
+        const v = vf.value
         if (isFn(grid, 'setCellValue')) call(grid, 'setCellValue', r, col, v)
         else if (isFn(ds, 'setValue')) call(ds, 'setValue', r, col, v)
         else return false
@@ -316,8 +346,9 @@
       },
       verify(r, role, value) {
         const got = norm(raw(r, role))
-        const { value: v, alt } = valueFor(role, value)
-        return got === norm(v) || (alt != null && got === norm(alt)) || got === norm(value)
+        const vf = valueFor(role, value)
+        if (!vf) return false
+        return got === norm(vf.value) || (vf.alt != null && got === norm(vf.alt)) || (role !== 'level' && got === norm(value))
       },
       finish() {
         call(grid, 'redraw')
@@ -342,13 +373,15 @@
 
   function cprGrids() {
     const out = []
-    for (const app of cprApps()) {
-      const known = !!knownSpecOf(app)
+    const apps = cprApps()
+    for (const app of apps) {
+      // 알려진 화면의 앱은 보이는 앱을 고른 뒤(resolveActive) 데이터셋 방식으로만 씁니다
+      if (knownSpecOf(app)) continue
       for (const c of appControls(app)) {
         if (!isGridCtrl(c)) continue
-        // 다른 MDI 탭에 숨어 있는 앱의 표는 쓰지 않습니다 (알려진 화면은 보이는 것이 확인될 때만)
+        // 다른 MDI 탭에 숨어 있는 앱의 표는 쓰지 않습니다. 앱이 여럿이면 보이는 것이 확인된 표만
         const v = ctrlVisibility(c)
-        if (v.visible === false || (known && v.visible !== true)) continue
+        if (v.visible === false || (apps.length > 1 && v.visible !== true)) continue
         try {
           out.push(makeCprGrid(app, c))
         } catch {
@@ -827,10 +860,13 @@
       if (isEl(e)) return { el: e, via: k }
     }
     const uuid = ctrlUuid(o)
-    if (uuid) {
+    // uuid가 없으면 "uuid-" + 컨트롤 id (실제 나이스 DOM id 모양: uuid-1nk)
+    const id = ctrlId(o)
+    for (const [u, via] of [[uuid, 'uuid'], [!uuid && id && /^\w+$/.test(id) ? 'uuid-' + id : '', 'uuid-id']]) {
+      if (!u) continue
       try {
-        const e = document.querySelector(`[data-ndid="${cssEsc(uuid)}"]`) || document.getElementById(uuid)
-        if (e) return { el: e, via: 'uuid' }
+        const e = document.querySelector(`[data-ndid="${cssEsc(u)}"]`) || document.getElementById(u)
+        if (e) return { el: e, via }
       } catch {
         // 무시
       }
@@ -1021,10 +1057,22 @@
       }
     }
     if (a && a !== 'many' && a.visible !== false) {
+      // MDI 선택 탭을 읽을 수 있는데 고른 앱이 그 탭 밖이면 믿지 않습니다
+      const m = getMdi()
+      if (m.app && !isWithin(a.app, m.app) && !elementWithin(a, m.app)) {
+        if (!warnings.includes('active-app-ambiguous')) warnings.push('active-app-ambiguous')
+        return res
+      }
       res.active = a
       res.how = how
     }
     return res
+  }
+  /** 고른 앱의 표 요소가 MDI 선택 탭 앱의 화면 요소 안에 있는지 (끼워 넣은 앱 관계를 API로 못 읽을 때) */
+  function elementWithin(k, outerApp) {
+    const inner = elementOf(k.grid) || elementOf(call(k.app, 'getContainer'))
+    const outer = elementOf(call(outerApp, 'getContainer')) || elementOf(outerApp)
+    return !!(inner && outer && outer.el !== inner.el && outer.el.contains(inner.el))
   }
 
   // --- 알려진 화면의 데이터셋 어댑터 (다른 표 방식과 같은 모양: has/rowCount/readNumber/readText/isEmpty/write/verify/finish) ---
@@ -1066,7 +1114,8 @@
       }
     }
     const colOf = (role) => (role === 'number' ? numberCol : spec.cols[role])
-    const has = (role) => (role === 'number' ? !!(numberCol || digitCol) : hasCol(spec.cols[role]))
+    const has = (role) =>
+      role === 'number' ? !!(numberCol || digitCol) : role === 'standard' ? hasCol(spec.cols.standard) || hasCol(spec.cols.stdCode) : hasCol(spec.cols[role])
 
     // --- 단계 콤보(cmbLvl) 항목: 글자(매우잘함…) → 나이스 코드 ---
     function comboItemsOf(ctl) {
@@ -1115,24 +1164,52 @@
       return m
     }
     function selectRow(r) {
-      for (const f of ['selectRow', 'setSelectedRowIndex', 'focusRow', 'focusCell']) {
+      for (const f of ['selectRow', 'setSelectedRowIndex', 'focusRow']) {
         if (isFn(grid, f)) {
           call(grid, f, r)
           return true
         }
       }
+      if (isFn(grid, 'focusCell')) {
+        call(grid, 'focusCell', r, 0)
+        return true
+      }
       return false
     }
+    /** 지금 고른 행: 숫자(-1 = 없음) 또는 undefined(읽을 수 없음) */
+    function currentSelection() {
+      const v = call(grid, 'getSelectedRowIndex') ?? prop(grid, 'selectedRowIndex')
+      if (typeof v === 'number') return v
+      for (const f of ['getSelectedIndices', 'getSelectedRowIndices']) {
+        if (!isFn(grid, f)) continue
+        const arr = toArray(call(grid, f))
+        return typeof arr[0] === 'number' ? arr[0] : -1
+      }
+      return undefined
+    }
+    function restoreSelection(prev) {
+      if (typeof prev === 'number' && prev >= 0) selectRow(prev)
+      else if (prev === -1) call(grid, 'clearSelection')
+    }
     let levelMap = null
+    let selectTried = false
     const rowCodes = new Map() // 행 → 단계 코드 (미리 정함)
-    /** 단계 글자 → 코드. 항목이 행마다 다르면 그 행을 골라 다시 읽습니다. 없으면 null (짐작하지 않음) */
-    function levelCodeFor(r, label) {
+    /**
+     * 단계 글자 → 코드. 없으면 null (짐작하지 않음).
+     * 항목이 비어 있으면(행마다 다른 항목) 한 번만 그 행을 골라 다시 읽고, 원래 고른 행으로 되돌립니다. noSelect면 고르지 않음
+     */
+    function levelCodeFor(r, label, noSelect) {
       if (!levelMap) levelMap = levelMapNow()
       let hit = levelMap.get(norm(label))
-      if (!hit && selectRow(r)) {
-        const m = levelMapNow()
-        hit = m.get(norm(label))
-        if (m.size && !levelMap.size) levelMap = m
+      if (!hit && !noSelect && !selectTried) {
+        selectTried = true
+        const prev = currentSelection()
+        if (selectRow(r)) {
+          const m = levelMapNow()
+          if (m.size > levelMap.size) levelMap = m
+          hit = levelMap.get(norm(label))
+          restoreSelection(prev)
+        }
       }
       return hit ? hit.value : null
     }
@@ -1182,24 +1259,50 @@
         return set.size === 1 ? [...set][0] : null
       },
       /** 단계 코드를 미리 정합니다. 못 찾은 글자 목록을 돌려줌 */
-      prepareLevels(tasks) {
+      prepareLevels(tasks, opts) {
         const missing = new Set()
+        const noSelect = !!(opts && opts.noSelect)
         for (const t of tasks)
           for (const c of t.cells) {
             if (c.role !== 'level') continue
-            const code = levelCodeFor(t.r, c.value)
+            const code = levelCodeFor(t.r, c.value, noSelect)
             if (code == null || code === '') missing.add(oneLine(c.value))
             else rowCodes.set(t.r + '|' + norm(c.value), code)
           }
         return [...missing]
       },
-      /** 인식 검사용: {글자: 코드} 또는 null */
-      levelCodes(tasks) {
+      /** 인식 검사용: {글자: 코드} 또는 null. 행을 고르지 않습니다 */
+      levelCodes() {
         if (!has('level')) return null
         if (!levelMap) levelMap = levelMapNow()
-        if (!levelMap.size && tasks && tasks.length) levelCodeFor(tasks[0].r, LEVEL_LABELS[0])
-        if (!levelMap || !levelMap.size) return null
+        if (!levelMap.size) return null
         return Object.fromEntries([...levelMap.values()].slice(0, 20).map((x) => [x.label, x.value]))
+      },
+      /** 단계 항목을 행을 고르지 않고는 읽을 수 없는지 */
+      levelItemsEmpty() {
+        if (!has('level')) return false
+        if (!levelMap) levelMap = levelMapNow()
+        return levelMap.size === 0
+      },
+      /** 빈 칸만: 이미 있는 단계 코드가 넣으려는 코드와 다른지 (그 행의 평가결과는 넣지 않음) */
+      levelMismatch(r, label) {
+        const now = norm(rd(r, spec.cols.level))
+        const want = rowCodes.get(r + '|' + norm(label))
+        return now !== '' && want != null && now !== norm(want)
+      },
+      /** 인식 검사용: 단계 코드가 있는 행에서 단계 이름·성취수준 열이 차 있는 수 (아직 쓰지 않는 열) */
+      levelSideColumns() {
+        if (!has('level')) return null
+        const cols = ['evlCtrNm', 'evlLvlCd', 'evlLvlNm'].filter((c) => hasCol(c))
+        const out = { rows: 0 }
+        for (const c of cols) out[c] = 0
+        const n = rowCount()
+        for (let r = 0; r < n && r < 2000; r++) {
+          if (norm(rd(r, spec.cols.level)) === '') continue
+          out.rows++
+          for (const c of cols) if (norm(rd(r, c)) !== '') out[c]++
+        }
+        return out.rows ? out : null
       },
       /** 인식 검사용 추정: 단계가 있는 행의 평가결과가 모두 차 있으면 true, 빈 것이 있으면 false, 단계가 있는 행이 없으면 null */
       resultAutoFill() {
@@ -1224,7 +1327,7 @@
         let v = value
         let before = null
         if (role === 'level') {
-          v = rowCodes.get(r + '|' + norm(value)) ?? levelCodeFor(r, value)
+          v = rowCodes.get(r + '|' + norm(value)) ?? levelCodeFor(r, value, true)
           if (v == null || v === '') return false
           before = rd(r, resultCol)
         }
@@ -1253,24 +1356,42 @@
         call(grid, 'redraw')
       },
       editableRows: () => [],
+      /**
+       * 저장: 이 앱(없으면 바깥 앱)의 btnSave. 꺼져 있으면 누르지 않고, 페이지 전체의 '저장' 글자 버튼으로 넘어가지 않습니다.
+       * 화면 요소로 찾을 때는 이 앱 화면 안에서만 찾습니다.
+       */
       async save() {
-        const btn = spec.save ? call(app, 'lookup', spec.save) : null
-        if (btn && prop(btn, 'enabled') !== false) {
+        const gone = { saved: false, confirmed: 0, note: '저장 직전에 화면이 바뀌어 저장하지 않았습니다. 화면을 확인하고 직접 저장하세요.' }
+        // 저장 직전: 이 앱이 아직 보이는지 다시 확인 (알 수 없으면 다시 골라 같은 앱인지)
+        const v = appVisibility(app, grid)
+        if (v.visible === false) return gone
+        if (v.visible == null) {
+          const again = resolveActive(null)
+          if (!again.active || again.active.app !== app) return gone
+        }
+        const parent = embedParent.get(app)
+        for (const a of parent ? [app, parent] : [app]) {
+          const btn = spec.save ? call(a, 'lookup', spec.save) : null
+          if (!btn) continue
+          const e = elementOf(btn)
+          if (e && !visible(e.el)) continue // 이 앱의 저장 버튼이 숨어 있으면 바깥 앱의 저장 버튼
+          if (prop(btn, 'enabled') === false || call(btn, 'isEnabled') === false) return { saved: false, confirmed: 0, note: '저장 버튼이 비활성' }
           if (isFn(btn, 'click')) {
             try {
               btn.click()
               return waitDialogs()
             } catch {
-              // 아래 DOM 방식
+              // 아래 요소 클릭
             }
           }
-          const e = elementOf(btn)
-          if (e && visible(e.el)) {
+          if (e) {
             clickEl(e.el)
             return waitDialogs()
           }
         }
-        return clickSave()
+        const root = elementOf(call(app, 'getContainer')) || elementOf(app) || (parent ? elementOf(call(parent, 'getContainer')) : null)
+        if (root && visible(root.el)) return clickSave(root.el)
+        return { saved: false, confirmed: 0, note: '저장 버튼을 찾지 못했습니다' }
       },
     }
   }
@@ -1391,34 +1512,41 @@
   const cleanPath = () => location.pathname.split(';')[0]
 
   /**
-   * 입력할 표 고르기. 알려진 나이스 화면이 보이면 그 앱의 데이터셋(cpr-known), 아니면 1차 방식(cpr 그리드/DOM).
-   * forced: 팝업의 "화면 지정" (있으면 그 화면만)
+   * 입력할 표 고르기. 알려진 나이스 화면이 보이면 그 앱의 데이터셋(cpr-known)만 씁니다.
+   * - 보이는 알려진 앱의 화면과 forced(팝업이 보낸 화면)가 다르면 fatal 'screen-mismatch' (다른 화면 글을 넣지 않음)
+   * - 알려진 앱이 있는데 보이는 앱을 하나로 정하지 못하면 fatal 'active-app-ambiguous' (다른 방식으로 넘어가지 않음)
+   * - 알려진 앱이 없거나 모두 숨어 있으면 1차 방식(알려지지 않은 cpr 그리드/DOM)
    */
   function chooseGrid(forced, a) {
-    const warnings = []
     const notes = []
     const kr = resolveActive(null)
-    let kres = kr
-    if (forced && (!kr.active || kr.active.spec.screen !== forced)) kres = resolveActive(forced)
-    for (const w of kr.warnings.concat(kres === kr ? [] : kres.warnings)) if (!warnings.includes(w)) warnings.push(w)
-    const k = kres.active
-    let kg = null
+    const warnings = kr.warnings.slice()
+    const k = kr.active
+    const base = { detectedScreen: k ? k.spec.screen : a.screen, k, knownList: kr.all, warnings, notes }
     if (k) {
+      if (forced && forced !== k.spec.screen) {
+        warnings.push('screen-mismatch')
+        return { ...base, screen: forced, g: null, fatal: 'screen-mismatch' }
+      }
+      let kg = null
       try {
         kg = makeKnownGrid(k)
       } catch {
         kg = null
       }
-      if (kg && !kg.usable(k.spec.screen)) {
-        warnings.push('known-columns-missing')
-        notes.push('나이스 화면의 데이터 열을 찾지 못해 다른 방식으로 입력합니다.')
-        kg = null
-      }
+      if (kg && kg.usable(k.spec.screen)) return { ...base, screen: k.spec.screen, g: kg }
+      // 데이터 열이 예상과 다름: 다른 cpr 표에는 쓰지 않고, 화면(DOM)에 보이는 편집 칸만
+      warnings.push('known-columns-missing')
+      notes.push('나이스 화면의 데이터 열을 찾지 못해 화면(DOM)에 보이는 칸에만 입력합니다.')
+      const dom = a.dom.filter((g) => usable(k.spec.screen, g)).sort((x, y) => y.rowCount() - x.rowCount())[0] || null
+      return { ...base, screen: k.spec.screen, g: dom }
     }
-    const detectedScreen = kr.active ? kr.active.spec.screen : a.screen
-    const screen = forced || detectedScreen
-    const g = kg || (SCREENS.includes(screen) ? pickGrid(screen, a) : null)
-    return { screen, detectedScreen, g, k, knownList: kr.all, warnings, notes }
+    if (kr.all.some((x) => x.rows > 0) && (warnings.includes('active-app-ambiguous') || warnings.includes('active-app-unconfirmed'))) {
+      notes.push('보이는 나이스 화면을 하나로 정하지 못해 입력하지 않았습니다. 쓰지 않는 탭을 닫고 다시 시도하세요.')
+      return { ...base, screen: forced || a.screen, g: null, fatal: 'active-app-ambiguous' }
+    }
+    const screen = forced || a.screen
+    return { ...base, screen, g: SCREENS.includes(screen) ? pickGrid(screen, a) : null }
   }
   const strategyOf = (g) => (!g ? null : g.source === 'cpr-known' ? 'cpr-known' : g.source === 'cpr' ? 'cpr' : 'dom')
 
@@ -1431,6 +1559,7 @@
     return {
       screen: c.screen,
       detectedScreen: c.detectedScreen,
+      blocked: c.fatal || null,
       forced: !!forced,
       running,
       ready: !!g,
@@ -1512,8 +1641,8 @@
     return els.filter((el) => !els.some((o) => o !== el && el.contains(o)))
   }
 
-  async function clickSave() {
-    const btns = findButtons(document, ['저장']).filter((b) => !b.closest(DIALOG_SEL))
+  async function clickSave(root = document) {
+    const btns = findButtons(root, ['저장']).filter((b) => !b.closest(DIALOG_SEL))
     if (!btns.length) return { saved: false, confirmed: 0, note: '저장 버튼을 찾지 못했습니다' }
     clickEl(btns[0])
     return waitDialogs()
@@ -1546,13 +1675,15 @@
   // ---------- 입력 ----------
   let running = false
   let aborted = false
-  window.addEventListener(
-    'keydown',
-    (e) => {
-      if (running && e.isTrusted) aborted = true
-    },
-    true,
-  )
+  // 입력 중에 사람이 키를 누르거나 화면을 누르면 멈춥니다 (확장이 보내는 이벤트는 isTrusted가 아님)
+  for (const type of ['keydown', 'pointerdown'])
+    window.addEventListener(
+      type,
+      (e) => {
+        if (running && e.isTrusted) aborted = true
+      },
+      true,
+    )
 
   function stop() {
     aborted = true
@@ -1575,7 +1706,8 @@
    * 입력 계획 (쓰기 없음): 표 고르기 → 행마다 번호 → 학생·성취기준·영역 맞추기 → 작업 목록.
    * fill과 inspect가 함께 씁니다. 막는 조건(반 섞임·과목 다름·마감·단계 코드 없음)은 blockers에 모읍니다.
    */
-  function buildPlan(job) {
+  function buildPlan(job, opts) {
+    const dry = !!(opts && opts.dry)
     const a = analyze()
     const forced = SCREENS.includes(job.screen) ? job.screen : null
     const c = chooseGrid(forced, a)
@@ -1583,6 +1715,7 @@
     const warnings = c.warnings.slice()
     const screen = c.screen
     const base = { screen, notes, warnings, k: c.k, knownList: c.knownList }
+    if (c.fatal) return { ...base, fatal: c.fatal }
     if (!SCREENS.includes(screen)) return { ...base, fatal: 'unknown-screen' }
     const g = c.g
     if (!g) return { ...base, fatal: 'grid-not-found', notes: notes.concat('입력할 표를 찾지 못했습니다. 조회를 누른 뒤 다시 시도하세요.') }
@@ -1689,9 +1822,10 @@
     }
 
     // 단계: 나이스 콤보(cmbLvl) 항목에서 코드를 찾습니다. 하나라도 없으면 짐작하지 않고 중단
+    // (데이터셋·cpr 표 모두. 화면(DOM) 방식은 콤보 글자를 직접 고름)
     let levelMissing = []
-    if (screen === '교과평가' && isFn(g, 'prepareLevels')) {
-      levelMissing = g.prepareLevels(tasks)
+    if (screen === '교과평가' && (g.source === 'cpr' || g.source === 'cpr-known') && tasks.some((t) => t.cells.some((x) => x.role === 'level'))) {
+      levelMissing = isFn(g, 'prepareLevels') ? g.prepareLevels(tasks, { noSelect: dry }) : ['(단계 항목을 읽을 수 없음)']
       if (levelMissing.length)
         blockers.push({ error: 'level-code-unknown', note: `단계 코드를 나이스 화면에서 찾지 못했습니다: ${levelMissing.join(', ')}` })
     }
@@ -1708,7 +1842,7 @@
   async function fillInner(job, progress) {
     const p = buildPlan(job)
     const strategy = strategyOf(p.g)
-    const empty = { screen: p.screen, strategy, filled: 0, cells: 0, missing: [], ambiguous: [], unmatchedStandards: [], saved: false }
+    const empty = { screen: p.screen, strategy, activeApp: p.k ? p.k.id : null, filled: 0, cells: 0, missing: [], ambiguous: [], unmatchedStandards: [], saved: false, warnings: p.warnings }
     if (p.fatal) return { error: p.fatal, ...empty, missing: p.fatal === 'grid-not-found' ? job.rows.map((r) => r.student) : [], notes: p.notes }
     if (p.blockers.length) {
       const b = p.blockers[0]
@@ -1724,16 +1858,27 @@
     let cellsWritten = 0
     let skipped = 0
     let failed = 0
+    let levelConflict = 0
     const filledStudents = new Set()
     const written = []
     progress({ phase: 'start', done: 0, total, screen })
     for (const t of tasks) {
       if (aborted) break
       let wrote = 0
+      let skipResult = false
       for (const c of t.cells) {
+        if (c.role === 'result' && skipResult) {
+          skipped++
+          continue
+        }
         // 교과평가: 단계를 고르면 나이스가 평가결과를 채울 수 있으므로, 평가결과의 빈 칸 판단은 단계를 쓴 뒤에 합니다
         if (mode === 'empty' && !g.isEmpty(t.r, c.role)) {
           skipped++
+          // 이미 다른 단계가 있으면 그 행의 평가결과는 넣지 않습니다 (다른 단계와 평가결과가 짝지어지지 않게)
+          if (c.role === 'level' && isFn(g, 'levelMismatch') && g.levelMismatch(t.r, c.value)) {
+            skipResult = true
+            levelConflict++
+          }
           continue
         }
         const ok = await g.write(t.r, c.role, c.value)
@@ -1764,6 +1909,7 @@
     if (failed) notes.push(`입력하지 못한 칸 ${failed}개`)
     const autoFilled = g.source === 'cpr-known' ? g.autoFilled : 0
     if (autoFilled) notes.push(`단계를 고르자 나이스가 평가결과를 채운 칸 ${autoFilled}개 (${mode === 'overwrite' ? '덮어쓰기: 데이터의 평가결과로 바꿈' : '빈 칸만: 나이스가 채운 글을 그대로 둠'})`)
+    if (levelConflict) notes.push(`단계가 이미 다른 값인 행 ${levelConflict}개는 평가결과를 넣지 않았습니다 (빈 칸만)`)
     if (skipped) notes.push(`이미 내용이 있어 건너뛴 칸 ${skipped}개 (빈 칸만)`)
     if (p.missing.length && g.source === 'dom') notes.push('표가 스크롤되면 화면에 보이는 행만 입력됩니다. 아래로 내린 뒤 "빈 칸만"으로 다시 실행하세요.')
 
@@ -1786,6 +1932,7 @@
       rows: done,
       cells: cellsWritten,
       skipped,
+      levelConflict,
       autoFilled,
       verifyFailed,
       failed,
@@ -1795,6 +1942,7 @@
       saved,
       confirmed,
       aborted,
+      warnings: p.warnings,
       notes,
     }
     progress({ phase: 'done', done, total })
@@ -1805,7 +1953,7 @@
   function inspect(job) {
     if (!job || !Array.isArray(job.rows)) return { error: 'bad-job' }
     if (running) return { error: 'busy' }
-    const p = buildPlan(job)
+    const p = buildPlan(job, { dry: true })
     const g = p.g
     const out = {
       screen: p.screen,
@@ -1823,6 +1971,7 @@
       cells: 0,
       levelCodes: null,
       resultAutoFill: null,
+      levelSideColumns: null,
       warnings: p.warnings.slice(),
       notes: p.notes.slice(),
     }
@@ -1839,8 +1988,10 @@
     if (p.screen === '교과평가') {
       out.standardsPerStudent = Object.fromEntries([...p.found].sort((x, y) => x - y).map((s) => [s, p.matchedCodes.get(s)?.size ?? 0]))
       out.unmatchedStandards = p.unmatchedStandards
-      if (isFn(g, 'levelCodes')) out.levelCodes = g.levelCodes(p.tasks)
+      if (isFn(g, 'levelCodes')) out.levelCodes = g.levelCodes()
+      if (isFn(g, 'levelItemsEmpty') && g.levelItemsEmpty()) out.notes.push('단계 항목이 비어 있습니다. 행 선택 필요 (행을 골라야 항목이 나오는 화면일 수 있음 — 자동 입력 때 한 번 골라 확인합니다)')
       if (isFn(g, 'resultAutoFill')) out.resultAutoFill = g.resultAutoFill()
+      if (isFn(g, 'levelSideColumns')) out.levelSideColumns = g.levelSideColumns()
     }
     return out
   }
@@ -2032,7 +2183,7 @@
       for (const c of DIGIT_COLS)
         if (colNames.includes(c)) {
           const t = get(r, c).trim()
-          row[c] = DIGITS_ONLY.test(t) ? t.slice(0, 20) : `[비숫자 len=${t.length}]`
+          row[c] = DIGITS_ONLY.test(t) ? t.slice(0, 20) : t ? '[비숫자]' : ''
         }
       for (const c of LENGTH_COLS) if (colNames.includes(c)) row[c] = `[len=${get(r, c).length}]`
       datasetSample.push(row)
@@ -2099,8 +2250,8 @@
     let known
     try {
       known = scanKnown()
-    } catch (e) {
-      known = { error: String(e && e.message ? e.message : e).slice(0, 200) }
+    } catch {
+      known = { error: 'scan-known-failed' }
     }
     const out = {
       kind: 'sgb-neis-frame-scan',

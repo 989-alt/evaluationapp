@@ -224,7 +224,12 @@
         getCellValue: (r, c) => ds.getValue(r, c),
         setCellValue: (r, c, v) => ds.setValue(r, c, v),
         redraw() { grid.__redraws = (grid.__redraws || 0) + 1 },
-        selectRow(r) { grid.__selected = r },
+        selectRow(r) {
+          grid.__selected = r
+          grid.__selectCalls = (grid.__selectCalls || 0) + 1
+        },
+        getSelectedRowIndex: () => (grid.__selected == null ? -1 : grid.__selected),
+        clearSelection() { grid.__selected = undefined },
         ...extra,
       }
       if (!NOEL) grid.uuid = nextUuid()
@@ -232,7 +237,9 @@
     }
     function makeApp(id, title, controls) {
       const map = new Map()
+      // 앱 화면 요소 (?noel=1이면 연결 없음)
       const cont = { getAllRecursiveChildren: () => controls.slice() }
+      if (!NOEL) cont.getElement = () => document.querySelector(`[data-app="${CSS.escape(id)}"]`)
       const app = { id, title, getContainer: () => cont, lookup: (cid) => map.get(cid) ?? null }
       for (const c of controls) map.set(c.id, c)
       app.__add = (c) => { controls.push(c); map.set(c.id, c) }
@@ -241,6 +248,7 @@
     function saveBtn(appIdStr) {
       return control('button', 'btnSave', {
         enabled: true,
+        ...(NOEL ? {} : { uuid: nextUuid() }),
         click() {
           window.__saveByApp[appIdStr] = (window.__saveByApp[appIdStr] || 0) + 1
           window.__saveClicks++
@@ -265,11 +273,12 @@
     for (const s of STU)
       STD.forEach(([code, text, goal], k) => {
         const pre = s === 2 && k === 0
+        const preLvl = Q.get('prelvl') === '1' && s === 4 && k === 1 // 단계만 있고 평가결과는 빈 행
         stdIndex.push(k)
         evalList.push({
           ...base(s), sbjtCd: '01', sbjtNm: '국어', clsNo: String(s), relmSn: '1', relmNm: '문학',
           sccesCtrCd: internal ? 'E' + (7100 + k) : code, sccesCtrCn: `[${code}] ${text}`, lrnGoalCn: goal,
-          evlCtrCd: pre ? 'C' : '', evlCtrNm: pre ? '보통' : '', evlCtrCn: pre ? '기존 결과' : '', sem: '1', enrScCd: '1', stdntInfo: `6/3/${s} ${fake(s)}`,
+          evlCtrCd: pre || preLvl ? 'C' : '', evlCtrNm: pre ? '보통' : '', evlCtrCn: pre ? '기존 결과' : '', sem: '1', enrScCd: '1', stdntInfo: `6/3/${s} ${fake(s)}`,
         })
       })
     const evalDs = new DataSet(EVAL_COLS, rowsOf(EVAL_COLS, evalList), (r, c, v, row) => {
@@ -282,7 +291,8 @@
       control('combobox', id, {
         getItems() {
           if (LVL === 'none' || LVL === 'itemset') return []
-          if (LVL === 'row') return evalGrid && evalGrid.__selected != null ? ITEMS.slice() : []
+          // 행마다 다른 항목: 첫 성취기준 행을 골랐을 때만 항목이 있음
+          if (LVL === 'row') return evalGrid && evalGrid.__selected != null && stdIndex[evalGrid.__selected] === 0 ? ITEMS.slice() : []
           return ITEMS.slice()
         },
         ...(LVL === 'itemset' ? { itemSetConfig: { dataSet: 'dsLvl', label: 'cdNm', value: 'cd' } } : {}),
@@ -416,11 +426,14 @@
     for (const [key, , keys] of TABS) {
       const shown = key === screen
       html += `<section class="mdi-tab cl-embeddedapp" data-tab="${esc2(key)}" style="display:${shown ? 'block' : 'none'}">`
-      html += `<div class="toolbar"><div class="cl-button" role="button" data-save="${esc2(key)}">저장</div></div>`
       for (const k of keys) {
         const a = apps[k]
         const gid = a.grid.uuid || 'dom-' + ++dn
         html += `<div class="app-sec" data-app="${esc2(a.app.id)}" style="display:${a.hidden ? 'none' : 'block'}">`
+        const sb = a.app.lookup('btnSave')
+        // ?m02btn=hidden: 교과평가 안쪽 앱(m02)의 저장 버튼이 숨어 있음 → 바깥 앱(m00)의 저장 버튼
+        const hideBtn = k === 'm02' && Q.get('m02btn') === 'hidden'
+        if (sb) html += `<div class="toolbar"><div class="cl-button" role="button" data-save-app="${esc2(a.app.id)}"${sb.uuid ? ` data-ndid="${sb.uuid}"` : ''}${hideBtn ? ' style="display:none"' : ''}>저장</div></div>`
         html += `<div class="cl-control cl-grid" role="grid" id="${gid}" data-ndid="${gid}"><div class="cl-grid-header" role="row">`
         html += a.domHeaders.map((h) => `<div role="columnheader" aria-label="${esc2(h === '반/번호' ? '반/번호 정렬' : h)}" style="display:inline-block;min-width:60px">${esc2(h)}</div>`).join('')
         html += '</div>'
@@ -436,12 +449,9 @@
     document.getElementById('grid').innerHTML = html
     // 실제 나이스처럼 화면 제목은 예전 탭(교과평가)이 남아 있을 수 있음 → 제목만으로 판단하면 틀림
     document.getElementById('title').textContent = '교과평가'
-    for (const el of document.querySelectorAll('[data-save]')) {
-      const tab = TABS.find((t) => t[0] === el.dataset.save)
-      el.addEventListener('click', () => {
-        const a = apps[tab[2].find((k) => apps[k].app.lookup('btnSave'))]
-        if (a) a.app.lookup('btnSave').click()
-      })
+    for (const el of document.querySelectorAll('[data-save-app]')) {
+      const a = Object.values(apps).find((x) => x.app.id === el.dataset.saveApp)
+      el.addEventListener('click', () => a.app.lookup('btnSave').click())
     }
 
     const selTab = TABS.find((t) => t[0] === screen)
@@ -466,6 +476,10 @@
       states: (k) => apps[k].ds._states.slice(),
       redraws: (k) => apps[k].grid.__redraws || 0,
       selected: (k) => apps[k].grid.__selected,
+      selectCalls: (k) => apps[k].grid.__selectCalls || 0,
+      select: (k, r) => apps[k].grid.selectRow(r),
+      grid: (k) => apps[k].grid,
+      app: (k) => apps[k].app,
       snapshot: () => JSON.stringify(Object.keys(apps).map((k) => apps[k].ds._rows)),
       snapshotExcept: (skip) => JSON.stringify(Object.keys(apps).filter((k) => k !== skip).map((k) => apps[k].ds._rows)),
     }

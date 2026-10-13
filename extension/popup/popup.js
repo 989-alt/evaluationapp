@@ -34,12 +34,15 @@ const ERR = {
   'subject-mismatch': '나이스 화면에서 고른 과목과 데이터 과목이 다릅니다. 과목을 맞춘 뒤 다시 실행하세요.',
   'level-code-unknown': '단계(매우잘함·잘함·보통·노력요함) 코드를 나이스 화면에서 찾지 못해 입력하지 않았습니다. 화면 구조를 수집해 보내 주세요.',
   closed: '마감된 학생이 있어 입력하지 않았습니다. 나이스에서 마감 여부를 확인하세요.',
+  'screen-mismatch': '화면 지정이 실제 화면과 다릅니다. "화면 지정"을 "자동 인식"으로 두거나 나이스에서 그 화면 탭을 연 뒤 다시 실행하세요.',
+  'active-app-ambiguous': '보이는 나이스 화면을 하나로 정하지 못해 입력하지 않았습니다. 쓰지 않는 탭을 닫고 "화면 다시 인식"을 누르세요.',
 }
 /** 화면 인식·인식 검사 경고 */
 const WARN = {
   'active-app-ambiguous': '보이는 나이스 화면이 여러 개라 하나를 고르지 못했습니다. 쓰지 않는 탭을 닫고 다시 인식하세요.',
   'active-app-unconfirmed': '지금 보이는 나이스 화면을 확인하지 못했습니다. 화면 구조를 수집해 보내 주세요.',
   'known-columns-missing': '나이스 화면의 데이터 열이 예상과 달라 화면(DOM) 방식으로 입력합니다.',
+  'screen-mismatch': ERR['screen-mismatch'],
   'mixed-classes': ERR['mixed-classes'],
   'subject-mismatch': ERR['subject-mismatch'],
   'level-code-unknown': ERR['level-code-unknown'],
@@ -464,6 +467,9 @@ function showInspect(r) {
       log.append(el('p', codes ? null : 'bad', codes ? `단계 코드: ${Object.entries(codes).map(([k, v]) => `${k}=${v}`).join(', ')}` : '단계 코드를 읽지 못했습니다 (단계는 입력하지 않습니다)'))
       const af = r.resultAutoFill === true ? '예 (단계를 고르면 나이스가 채우는 것으로 보임)' : r.resultAutoFill === false ? '아니오' : '알 수 없음'
       log.append(el('p', 'muted', `평가결과 자동 채움: ${af}`))
+      const side = r.levelSideColumns
+      if (side && side.rows)
+        log.append(el('p', 'muted', `단계가 있는 ${side.rows}행 중 단계 이름 ${side.evlCtrNm ?? '-'} · 성취수준 코드 ${side.evlLvlCd ?? '-'} · 성취수준 이름 ${side.evlLvlNm ?? '-'}행이 차 있음`))
     }
   }
   for (const w of arr(r.warnings)) if (WARN[w]) log.append(el('p', 'bad', WARN[w]))
