@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { Alert, Card, PageHeader, Spinner, toast } from '@/components/ui'
 import { useStore, modelsByTier } from '@/store'
-import { detectProvider, listModels, PROVIDER_LABEL, PROVIDER_PDF } from '@/llm/provider'
+import { BUDGET_MESSAGE, detectProvider, listModels, PROVIDER_LABEL, PROVIDER_PDF } from '@/llm/provider'
 import type { ModelInfo, Provider } from '@/lib/types'
 
 const TIER_LABEL: Record<NonNullable<ModelInfo['tier']>, string> = { recommended: '권장', fast: '빠름 · 저렴', best: '최고 품질 · 느림', other: '나머지' }
@@ -34,6 +34,11 @@ export default function SettingsPage() {
   }
 
   const provider = settings.provider
+  const needKey = !!(useLocation().state as { needKey?: boolean } | null)?.needKey
+  const keyRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (needKey) keyRef.current?.focus()
+  }, [needKey])
 
   const onKey = (v: string) => {
     const p = detectProvider(v)
@@ -82,17 +87,34 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="STEP 0 · 설정"
         title={<>처음 한 번만 설정하면<br />다음부터는 바로 시작합니다</>}
-        aside={<p className="m-0 max-w-[360px] text-muted">API 키는 이 브라우저에만 저장되고, 선택한 AI 제공사(Google·Anthropic·OpenAI)로만 전송됩니다. 키를 붙여넣으면 제공사를 알아보고 쓸 수 있는 모델을 보여줍니다.</p>}
+        aside={<p className="m-0 max-w-[360px] text-muted">{settings.useShared ? '기본 제공은 키 없이 바로 쓸 수 있습니다. 사용량 한도에 닿으면 본인 API 키로 이어서 쓰면 됩니다.' : 'API 키는 이 브라우저에만 저장되고, 선택한 AI 제공사(Google·Anthropic·OpenAI)로만 전송됩니다. 키를 붙여넣으면 제공사를 알아보고 쓸 수 있는 모델을 보여줍니다.'}</p>}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2 flex flex-col gap-5">
           <Card className="p-6 flex flex-col gap-3.5">
-            <Step n={1} title="API 키" />
+            <Step n={1} title="사용 방식" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {([
+                [true, '기본 제공', 'Claude Sonnet · 키 없이 바로 사용 · 하루·한 달 사용량 한도가 있습니다'],
+                [false, '내 API 키', 'Google · Anthropic · OpenAI 키로 직접 호출 · 모델 선택 가능 · 한도 없음'],
+              ] as const).map(([v, title, note]) => (
+                <label key={title} className={`flex gap-3 items-start p-4 rounded-[14px] cursor-pointer border-[1.5px] ${settings.useShared === v ? 'bg-ground border-ink' : 'border-transparent bg-ground/60 hover:bg-ground'}`}>
+                  <input type="radio" name="mode" checked={settings.useShared === v} onChange={() => setSettings({ useShared: v })} className="mt-1 w-4 h-4 accent-ink" />
+                  <span><span className="font-bold block">{title}</span><span className="text-[12px] text-muted">{note}</span></span>
+                </label>
+              ))}
+            </div>
+            {needKey && <Alert kind="warn">{BUDGET_MESSAGE} 아래에 본인 API 키를 넣어 주세요.</Alert>}
+            {settings.useShared && <p className="m-0 text-[13px] text-muted">기본 제공은 평가계획·성적 데이터를 이 앱의 중계 서버를 거쳐 Anthropic으로 보냅니다. 중계 서버는 사용량만 기록하고 내용을 저장하지 않습니다.</p>}
+          </Card>
+
+          {!settings.useShared && <Card className="p-6 flex flex-col gap-3.5">
+            <Step n={2} title="API 키" />
             <label className="flex flex-col gap-2">
               <span className="text-[13px] text-muted">키 붙여넣기</span>
               <span className="flex gap-2">
-                <input type={show ? 'text' : 'password'} value={settings.apiKey} onChange={(e) => onKey(e.target.value)} placeholder="AIza… / sk-ant-… / sk-…" className="field font-mono" autoComplete="off" spellCheck={false} />
+                <input ref={keyRef} type={show ? 'text' : 'password'} value={settings.apiKey} onChange={(e) => onKey(e.target.value)} placeholder="AIza… / sk-ant-… / sk-…" className="field font-mono" autoComplete="off" spellCheck={false} />
                 <button type="button" className="btn" onClick={() => setShow((v) => !v)}>{show ? '숨기기' : '보기'}</button>
               </span>
             </label>
@@ -121,7 +143,7 @@ export default function SettingsPage() {
               <span className="rounded-full bg-ground px-2.5 py-1">sk-ant-… → Anthropic (Claude)</span>
               <span className="rounded-full bg-ground px-2.5 py-1">sk-… → OpenAI (GPT)</span>
             </div>
-            <details className="text-[13px] text-muted">
+            <details className="text-[13px] text-muted" open={needKey || undefined}>
               <summary className="cursor-pointer text-ink font-medium">키는 어디서 받나요?</summary>
               <div className="pt-2 flex flex-col gap-1">
                 <span><a className="underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a> → API 키 만들기 (무료 할당량)</span>
@@ -129,11 +151,11 @@ export default function SettingsPage() {
                 <span><a className="underline" href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">OpenAI Platform</a> → API keys</span>
               </div>
             </details>
-          </Card>
+          </Card>}
 
-          <Card className="overflow-hidden">
+          {!settings.useShared && <Card className="overflow-hidden">
             <div className="px-6 pt-5 pb-3 flex flex-wrap items-center gap-2.5">
-              <Step n={2} title="모델 선택" />
+              <Step n={3} title="모델 선택" />
               <span className="flex-1" />
               {provider && <span className="text-[12px] text-muted">{PROVIDER_PDF[provider] ? 'PDF 직접 입력 가능' : 'PDF는 앱이 텍스트로 변환해 전송'}</span>}
             </div>
@@ -154,7 +176,7 @@ export default function SettingsPage() {
                 <div className="px-4 py-6 text-[13px] text-muted">API 키를 넣고 "연결 확인"을 누르면 실제로 쓸 수 있는 모델만 보여줍니다. 목록은 이 브라우저에 저장되며 '목록 새로고침'으로 다시 받습니다.</div>
               )}
             </div>
-          </Card>
+          </Card>}
         </div>
 
         <div className="flex flex-col gap-5">
@@ -168,14 +190,14 @@ export default function SettingsPage() {
           </Card>
 
           <Card className="p-6 flex flex-col gap-3">
-            <Step n={3} title="개인정보" />
+            <Step n={4} title="개인정보" />
             <label className="flex gap-2.5 items-start text-[13px]"><input type="checkbox" checked disabled className="mt-0.5 w-4 h-4 accent-ink" /><span><strong>학생 이름 대신 출석번호만 전송</strong><span className="block text-muted">평어 · 행발 · 창체 모두. 끌 수 없습니다.</span></span></label>
             <label className="flex gap-2.5 items-start text-[13px]"><input type="checkbox" checked={settings.persistResults} onChange={(e) => setSettings({ persistResults: e.target.checked })} className="mt-0.5 w-4 h-4 accent-ink" /><span>생성 결과를 이 브라우저에 저장 (새로고침해도 유지)<span className="block text-muted">나이스로 보낸 데이터는 확장이 읽어야 하므로 항상 저장됩니다.</span></span></label>
             <button type="button" className="btn btn-sm self-start text-lv3-ink" onClick={() => { if (confirm('평가계획, 성적, 결과, API 키를 모두 지웁니다. 계속할까요?')) resetAll() }}>이 브라우저의 모든 데이터 지우기</button>
           </Card>
 
           <Card className="p-6 flex flex-col gap-3">
-            <Step n={4} title="문장 규칙" />
+            <Step n={5} title="문장 규칙" />
             <div className="flex flex-col gap-2.5 text-[13px]">
               <label className="flex justify-between items-center gap-2"><span>종결 어미</span>
                 <select value={settings.ending} onChange={(e) => setSettings({ ending: e.target.value as any })} className="field !w-auto !py-1.5"><option value="함">-함. / -임.</option><option value="하였음">-하였음. / -이었음.</option></select></label>

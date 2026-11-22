@@ -48,6 +48,8 @@ export interface ModelInfo {
 }
 
 export interface Settings {
+  /** true 면 기본 제공(프록시, Claude Sonnet 고정), false 면 아래 apiKey 사용 */
+  useShared: boolean
   apiKey: string
   provider: Provider | null
   model: string
