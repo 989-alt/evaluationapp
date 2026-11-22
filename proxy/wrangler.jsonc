@@ -2,6 +2,8 @@
   "name": "saenggibu-proxy",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "preview_urls": false,
   "vars": { "ALLOWED_ORIGINS": "https://989-alt.github.io" },
   "durable_objects": { "bindings": [{ "name": "BUDGET", "class_name": "Budget" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Budget"] }],
