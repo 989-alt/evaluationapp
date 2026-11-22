@@ -1,6 +1,6 @@
 # AI 생기부 보조 생성기
 
-초등 담임 교사가 학교 **평가 계획표(PDF)** 한 장으로 교과 평어 · 행동특성 및 종합의견 · 창의적 체험활동 특기사항을 만들고, 검사한 뒤 나이스에 넣을 수 있게 돕는 정적 웹앱입니다. 서버 없이 브라우저에서만 동작하며, 사용자의 API 키로 Google Gemini / Anthropic Claude / OpenAI GPT를 직접 호출합니다.
+초등 담임 교사가 학교 **평가 계획표(PDF)** 한 장으로 교과 평어 · 행동특성 및 종합의견 · 창의적 체험활동 특기사항을 만들고, 검사한 뒤 나이스에 넣을 수 있게 돕는 정적 웹앱입니다. 키 없이 쓰는 **기본 제공**(Claude Sonnet, 중계 서버 `proxy/` 경유, 사용량 한도 있음)과, 사용자의 API 키로 Google Gemini / Anthropic Claude / OpenAI GPT를 브라우저에서 직접 호출하는 방식 중에서 고릅니다.
 
 **모토: 사용자는 편하게, 성능은 확실하게.**
 
@@ -19,6 +19,7 @@
 
 - 학생 **이름은 입력받지 않고 출석번호만** 사용합니다. API에는 번호와 성적·특성만 보냅니다.
 - API 키와 모든 데이터는 이 브라우저의 `localStorage`에만 저장됩니다. API 키는 선택한 AI 제공사로만 전송됩니다.
+- 기본 제공을 쓰면 요청이 중계 서버(Cloudflare Worker)를 거쳐 Anthropic으로 갑니다. 중계 서버는 사용액만 기록하고(익명 기기 ID·IP 해시 기준) 요청 내용은 저장하지 않습니다.
 - 나이스로 보내기 전 사람 이름 패턴·금지 문자·바이트 초과·중복 문장을 검사합니다.
 
 ## 개발
@@ -64,3 +65,26 @@ src/
 - 도움말 페이지의 실제 화면 스크린샷: `src/assets/guide/step0.png` … `step5.png`를 넣으면 빌드에 포함되고, 없는 단계는 도식으로 보입니다.
 
 이전 단일 파일 버전은 `legacy_index.html`에 남겨 두었습니다.
+
+## 기본 제공 중계 서버 (`proxy/`)
+
+Cloudflare Worker + Durable Object(SQLite). 운영자 키는 Worker secret 에만 있습니다. 모델은 `claude-sonnet-5-5`, thinking 은 끔(`between_tools`)으로 서버가 고정합니다.
+
+| 한도 (KST 기준) | 값 |
+|---|---|
+| 전체 한 달 | $150 |
+| 전체 하루 | $11 |
+| 기기 하루 / 한 달 | $1 / $2.5 |
+| IP 하루 | $5 (학교는 한 IP를 여러 교사가 같이 씀) |
+
+한도에 닿으면 402와 "사용량 초과로 개별 API 키 준비가 필요합니다." 를 돌려주고, 앱은 키 입력 화면으로 안내합니다. 로그인이 없어 기기·IP 한도는 우회될 수 있습니다. 돈을 막는 실제 벽은 전체 한도와 Anthropic Console 월 지출 상한입니다.
+
+```bash
+cd proxy
+npm install
+npm test                                   # 한도·비용·요청 정리 로직
+npx wrangler deploy
+npx wrangler secret put ANTHROPIC_API_KEY  # 운영자 키
+```
+
+배포 주소가 `src/llm/provider.ts` 의 `PROXY_URL` 기본값과 다르면 그 값을 고치거나 빌드 때 `VITE_PROXY_URL` 을 줍니다.

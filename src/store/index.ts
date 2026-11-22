@@ -5,6 +5,7 @@ import type {
   ModelInfo, NeisPayload, Provider, Settings, StudentResult,
 } from '@/lib/types'
 import { repairPlan } from '@/lib/plan'
+import { SHARED_CLIENT, type Client } from '@/llm/provider'
 
 /** 크롬 확장(2차)이 읽는 나이스 입력 데이터. API 키가 든 저장소 본체 대신 이 키만 읽게 합니다 */
 export const NEIS_STORAGE_KEY = 'saenggibu-neis'
@@ -74,6 +75,7 @@ interface State {
 }
 
 const defaultSettings: Settings = {
+  useShared: true,
   apiKey: '',
   provider: null,
   model: '',
@@ -188,7 +190,10 @@ export const useStore = create<State>()(
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<State>
         const plans = Array.isArray(p.plans) ? p.plans.map(repairPlan) : current.plans
-        return { ...current, ...p, plans, settings: { ...current.settings, ...(p.settings ?? {}) }, copied: {} }
+        // 기본 제공이 생기기 전 사용자: 키를 넣어 둔 사람은 계속 자기 키, 없던 사람은 기본 제공
+        const ps = (p.settings ?? {}) as Partial<Settings>
+        const useShared = ps.useShared ?? !ps.apiKey
+        return { ...current, ...p, plans, settings: { ...current.settings, ...ps, useShared }, copied: {} }
       },
       partialize: (s) => {
         const { copied, ...rest } = s
@@ -206,8 +211,9 @@ export function useActivePlan(): EvalPlan | null {
   return useStore((s) => s.plans.find((p) => p.id === s.activePlanId) ?? null)
 }
 
-export function useClient() {
-  const { apiKey, provider, model } = useStore((s) => s.settings)
+export function useClient(): Client | null {
+  const { useShared, apiKey, provider, model } = useStore((s) => s.settings)
+  if (useShared) return SHARED_CLIENT
   if (!apiKey || !provider || !model) return null
   return { key: apiKey, provider: provider as Provider, model }
 }

@@ -141,7 +141,31 @@ export interface Client {
   provider: Provider
   key: string
   model: string
+  /** 기본 제공: 키 없이 프록시로 보냅니다. 모델·사고 설정은 프록시가 정합니다 */
+  shared?: boolean
 }
+
+/** 기본 제공 프록시 주소(빌드 때 VITE_PROXY_URL 로 바꿀 수 있음) */
+export const PROXY_URL = (import.meta.env.VITE_PROXY_URL as string | undefined) ?? 'https://saenggibu-proxy.sunhak989.workers.dev'
+export const SHARED_MODEL = 'claude-sonnet-5-5'
+export const SHARED_CLIENT: Client = { provider: 'anthropic', key: '', model: SHARED_MODEL, shared: true }
+/** 기본 제공 한도 안내. 프록시의 402 응답 문구와 같습니다 */
+export const BUDGET_MESSAGE = '사용량 초과로 개별 API 키 준비가 필요합니다.'
+/** 한도에 닿으면 window 에 이 이벤트를 보냅니다. Shell 이 받아 키 입력으로 안내합니다 */
+export const BUDGET_EVENT = 'saenggibu:budget-exceeded'
+
+/** 기기별 한도를 세는 익명 식별값(이 브라우저에만 저장). 학생·교사 정보와 무관합니다 */
+function deviceId(): string {
+  const k = 'saenggibu-device'
+  try {
+    let v = localStorage.getItem(k)
+    if (!v) localStorage.setItem(k, (v = crypto.randomUUID()))
+    return v
+  } catch {
+    return (memoDevice ??= crypto.randomUUID())
+  }
+}
+let memoDevice: string | undefined
 
 export async function generateJSON<T = unknown>(c: Client, o: GenerateOptions, retry = 0): Promise<T> {
   try {
@@ -208,9 +232,11 @@ export async function generateText(c: Client, o: GenerateOptions): Promise<strin
       content.push({ type: 'text', text: o.prompt })
       const body: any = { model: c.model, max_tokens: Math.min(maxTokens, 16000), messages: [{ role: 'user', content }] }
       if (o.system) body.system = o.system
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const res = await fetch(c.shared ? `${PROXY_URL}/v1/messages` : 'https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': c.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        headers: c.shared
+          ? { 'Content-Type': 'application/json', 'x-device-id': deviceId() }
+          : { 'Content-Type': 'application/json', 'x-api-key': c.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify(body), signal: o.signal,
       }).catch(netFail)
       await check(res)
@@ -244,6 +270,10 @@ export async function generateText(c: Client, o: GenerateOptions): Promise<strin
 async function check(res: Response) {
   if (res.ok) return
   const msg = await errText(res, `서버 오류 (${res.status})`)
+  if (res.status === 402) {
+    window.dispatchEvent(new Event(BUDGET_EVENT))
+    throw new LLMError(BUDGET_MESSAGE, 402)
+  }
   if (res.status === 429) throw new LLMError(`사용량 제한(429): ${msg}`, 429, true)
   if (res.status >= 500) throw new LLMError(msg, res.status, true)
   if (res.status === 401 || res.status === 403) throw new LLMError(`API 키가 거부되었습니다: ${msg}`, res.status)

@@ -1,7 +1,8 @@
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { Modal, Toast } from '@/components/ui'
 import { useStore } from '@/store'
+import { BUDGET_EVENT, BUDGET_MESSAGE } from '@/llm/provider'
 
 const Icon = {
   settings: <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>,
@@ -34,6 +35,18 @@ export default function Shell() {
     setSettings({ guideSeen: true })
     setWelcome(false)
   }
+  const navigate = useNavigate()
+  const [budget, setBudget] = useState(false)
+  useEffect(() => {
+    const on = () => setBudget(true)
+    window.addEventListener(BUDGET_EVENT, on)
+    return () => window.removeEventListener(BUDGET_EVENT, on)
+  }, [])
+  const goKey = () => {
+    setBudget(false)
+    setSettings({ useShared: false })
+    navigate('/settings', { state: { needKey: true } })
+  }
 
   return (
     <div className="min-h-full flex">
@@ -61,10 +74,19 @@ export default function Shell() {
       <Modal open={welcome} onClose={closeWelcome}>
         <div className="eyebrow mb-2">처음 오셨나요?</div>
         <h2 className="h1 !text-[28px] mb-3">평가계획 한 장이면<br />한 학기 평어가 나이스까지 갑니다</h2>
-        <p className="text-muted mb-5">설정(API 키) → 평가계획 PDF 업로드 → 성적 입력 → 평어 생성 → 나이스 입력 순서입니다. 각 단계의 화면 설명이 도움말에 있습니다.</p>
+        <p className="text-muted mb-5">설정(기본 제공 또는 내 API 키) → 평가계획 PDF 업로드 → 성적 입력 → 평어 생성 → 나이스 입력 순서입니다. 각 단계의 화면 설명이 도움말에 있습니다.</p>
         <div className="flex gap-2 justify-end">
           <button className="btn" onClick={closeWelcome}>바로 시작</button>
           <Link to="/guide" className="btn-primary" onClick={closeWelcome}>사용 설명서 보기</Link>
+        </div>
+      </Modal>
+      <Modal open={budget} onClose={() => setBudget(false)}>
+        <div className="eyebrow mb-2">기본 제공 사용량</div>
+        <h2 className="h1 !text-[24px] mb-3">{BUDGET_MESSAGE}</h2>
+        <p className="text-muted mb-5">본인 API 키를 넣으면 멈춘 작업을 이어서 할 수 있습니다. 기본 제공은 다음 날(하루 한도) 또는 다음 달 1일(한 달 한도)에 다시 열립니다.</p>
+        <div className="flex gap-2 justify-end">
+          <button className="btn" onClick={() => setBudget(false)}>닫기</button>
+          <button className="btn-primary" onClick={goKey}>API 키 입력하기</button>
         </div>
       </Modal>
     </div>
