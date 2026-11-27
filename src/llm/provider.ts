@@ -13,7 +13,8 @@ export interface GenerateOptions {
 }
 
 export class LLMError extends Error {
-  constructor(message: string, public status?: number, public retryable = false) {
+  /** truncated: 길이 제한이나 JSON 잘림 — 묶음을 나눠 다시 요청하면 풀립니다 */
+  constructor(message: string, public status?: number, public retryable = false, public truncated = false) {
     super(message)
   }
 }
@@ -179,7 +180,7 @@ export async function generateJSON<T = unknown>(c: Client, o: GenerateOptions, r
       if (o.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       return generateJSON<T>(c, o, retry + 1)
     }
-    if (e instanceof SyntaxError) throw new LLMError('AI 응답이 올바른 JSON이 아니거나 중간에 잘렸습니다. 생성 개수를 줄이거나 다시 시도해 주세요.')
+    if (e instanceof SyntaxError) throw new LLMError('AI 응답이 올바른 JSON이 아니거나 중간에 잘렸습니다. 생성 개수를 줄이거나 다시 시도해 주세요.', undefined, false, true)
     throw e
   }
 }
@@ -221,7 +222,7 @@ export async function generateText(c: Client, o: GenerateOptions): Promise<strin
       }).catch(netFail)
       await check(res)
       const data = await res.json()
-      if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new LLMError(TRUNCATED)
+      if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new LLMError(TRUNCATED, undefined, false, true)
       const text = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('') ?? ''
       if (!text) throw new LLMError(data?.promptFeedback?.blockReason ? `요청이 차단되었습니다: ${data.promptFeedback.blockReason}` : 'AI 응답이 비어 있습니다')
       return text
@@ -241,7 +242,7 @@ export async function generateText(c: Client, o: GenerateOptions): Promise<strin
       }).catch(netFail)
       await check(res)
       const data = await res.json()
-      if (data.stop_reason === 'max_tokens') throw new LLMError(TRUNCATED)
+      if (data.stop_reason === 'max_tokens') throw new LLMError(TRUNCATED, undefined, false, true)
       if (data.stop_reason === 'refusal') throw new LLMError('모델이 요청을 거절했습니다. 입력 내용을 확인해 주세요.')
       const text = (data.content ?? []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
       if (!text) throw new LLMError('AI 응답이 비어 있습니다')
@@ -259,7 +260,7 @@ export async function generateText(c: Client, o: GenerateOptions): Promise<strin
       }).catch(netFail)
       await check(res)
       const data = await res.json()
-      if (data?.choices?.[0]?.finish_reason === 'length') throw new LLMError(TRUNCATED)
+      if (data?.choices?.[0]?.finish_reason === 'length') throw new LLMError(TRUNCATED, undefined, false, true)
       const text = data?.choices?.[0]?.message?.content ?? ''
       if (!text) throw new LLMError('AI 응답이 비어 있습니다')
       return text
