@@ -8,6 +8,7 @@ import { downloadXlsx } from '@/lib/excel'
 import { hasErrors, validateComment, type Issue } from '@/lib/validate'
 import { BEHAVIOR_EXTRA_BYTES } from '@/lib/neis'
 import { flatten, hash, neisBytes, sleep } from '@/lib/text'
+import { behaviorTokens, runSplitting } from '@/lib/split'
 import type { BehaviorResult, BehaviorStudent, NeisPayload } from '@/lib/types'
 
 const CATEGORIES: Array<{ key: string; label: string; traits: string[] }> = [
@@ -15,7 +16,8 @@ const CATEGORIES: Array<{ key: string; label: string; traits: string[] }> = [
   { key: 'character', label: '성격·인성', traits: ['끈기', '예의', '배려', '독서', '교우관계', '규칙준수', '소신', '봉사', '갈등관리', '책임감', '발표', '협력', '유머'] },
   { key: 'arts', label: '예체능', traits: ['음악', '미술', '체육'] },
 ]
-const BATCH = 5
+// 한국어는 토큰이 많이 들어 5명은 길이 제한에 걸리기 쉬워 3명씩 묶습니다(그래도 잘리면 자동으로 나눕니다)
+const BATCH = 3
 const MAX_EXTRA = BEHAVIOR_EXTRA_BYTES
 
 const shortName = (t: string) => t.replace(/^학습\((.+)\)$/, '$1')
@@ -168,7 +170,7 @@ export default function BehaviorPage() {
         system: SYSTEM_TEACHER,
         prompt: behaviorExpandPrompt(short.map((s) => ({ id: s.student, text: s.text })), behaviorBytes, ending),
         temperature: 0.7,
-        maxTokens: 8000,
+        maxTokens: behaviorTokens(short.length, behaviorBytes),
         signal,
       })
       const fixed = new Map(parseBatch(out).map((p) => [p.id, p.text]))
@@ -190,6 +192,30 @@ export default function BehaviorPage() {
     let got = 0
     let missing: number[] = []
     let failed = false
+    const doneIds = new Set<number>()
+    /** 한 묶음(또는 나눈 조각)을 요청해 결과에 합칩니다 */
+    const runGroup = async (group: BehaviorStudent[]): Promise<number[]> => {
+      const { behaviorBytes, ending } = useStore.getState().settings
+      const out = await generateJSON<unknown>(c, {
+        system: SYSTEM_TEACHER,
+        prompt: behaviorPrompt(group.map((s) => ({ id: s.id, traits: traitsOf(s) })), behaviorBytes, ending),
+        temperature: 0.8,
+        maxTokens: behaviorTokens(group.length, behaviorBytes),
+        signal: ctrl.signal,
+      })
+      const allowed = new Set(group.map((s) => s.id))
+      let items: BehaviorResult[] = []
+      for (const p of parseBatch(out)) if (allowed.has(p.id) && !items.some((i) => i.student === p.id)) items.push({ student: p.id, text: p.text })
+      items = await expandShort(items, c, ctrl.signal)
+      mergeResults(items)
+      got += items.length
+      missing = [...missing, ...group.filter((s) => !items.some((i) => i.student === s.id)).map((s) => s.id)]
+      done += group.length
+      group.forEach((s) => doneIds.add(s.id))
+      setProgress({ done, total: targets.length })
+      setPending((p) => p.filter((id) => !allowed.has(id)))
+      return group.map((s) => s.id)
+    }
     setRunning(true)
     setPending(targets.map((t) => t.id))
     setProgress({ done: 0, total: targets.length })
@@ -202,22 +228,21 @@ export default function BehaviorPage() {
           await sleep(wait, ctrl.signal)
           if (ctrl.signal.aborted) break
         }
-        const payload = batch.map((s) => ({ id: s.id, traits: traitsOf(s) }))
-        let out: unknown
         try {
-          out = await generateJSON<unknown>(c, {
-            system: SYSTEM_TEACHER,
-            prompt: behaviorPrompt(payload, useStore.getState().settings.behaviorBytes, useStore.getState().settings.ending),
-            temperature: 0.8,
-            maxTokens: 8000,
-            signal: ctrl.signal,
+          // 응답이 길이 제한에 잘리면 묶음을 반으로 나눠 다시 요청합니다(1명까지). 끝난 조각은 바로 결과에 합칩니다.
+          await runSplitting(batch, runGroup, {
+            onSplit: async (g) => {
+              setMessage(`응답이 길어 ${g.length}명 묶음을 나눠 다시 요청합니다…`)
+              await sleep(wait, ctrl.signal)
+            },
           })
         } catch (e) {
           if (ctrl.signal.aborted) break
           const msg = e instanceof Error ? e.message : String(e)
+          const failedIds = batch.filter((s) => !doneIds.has(s.id)).map((s) => s.id)
           const later = batches.slice(b + 1).flat().map((s) => s.id)
           setError(
-            `${batch.map((s) => s.id).join(', ')}번 묶음 오류: ${msg}` +
+            `${failedIds.join(', ')}번 묶음 오류: ${msg}` +
               (later.length ? ` 이후 ${later.join(', ')}번은 시작하지 못했습니다.` : '') +
               (missing.length ? ` 앞 묶음에서 ${missing.join(', ')}번은 결과를 받지 못했습니다.` : '') +
               ' 결과가 없는 학생은 "결과 없는 학생만 생성"으로 이어서 생성하세요.',
@@ -226,17 +251,6 @@ export default function BehaviorPage() {
           failed = true
           break
         }
-        const parsed = parseBatch(out)
-        const allowed = new Set(batch.map((s) => s.id))
-        let items: BehaviorResult[] = []
-        for (const p of parsed) if (allowed.has(p.id) && !items.some((i) => i.student === p.id)) items.push({ student: p.id, text: p.text })
-        items = await expandShort(items, c, ctrl.signal)
-        mergeResults(items)
-        got += items.length
-        missing = [...missing, ...batch.filter((s) => !items.some((i) => i.student === s.id)).map((s) => s.id)]
-        done += batch.length
-        setProgress({ done, total: targets.length })
-        setPending((p) => p.filter((id) => !allowed.has(id)))
       }
       if (ctrl.signal.aborted) toast(`중지했습니다 · ${got}명 완료`)
       else if (failed) {
@@ -272,7 +286,7 @@ export default function BehaviorPage() {
         system: SYSTEM_TEACHER,
         prompt: behaviorPrompt([{ id: n, traits: traitsOf(s) }], settings.behaviorBytes, settings.ending),
         temperature: 0.9,
-        maxTokens: 4000,
+        maxTokens: behaviorTokens(1, settings.behaviorBytes),
         signal: ctrl.signal,
       })
       const hit = parseBatch(out).find((p) => p.id === n) ?? parseBatch(out)[0]

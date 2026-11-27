@@ -7,7 +7,8 @@ import { creativePrompt, SYSTEM_TEACHER } from '@/llm/prompts'
 import { downloadXlsx } from '@/lib/excel'
 import { hasErrors, validateComment } from '@/lib/validate'
 import { neisByteLimit } from '@/lib/neis'
-import { flatten, hash, neisBytes } from '@/lib/text'
+import { flatten, hash, neisBytes, sleep } from '@/lib/text'
+import { creativeTokens, runSplitting, splitByCount } from '@/lib/split'
 import type { CreativeInput, CreativeResult, NeisPayload } from '@/lib/types'
 
 const CREATIVE_LIMIT = neisByteLimit('creative', 0)
@@ -46,6 +47,7 @@ export default function CreativePage() {
   const [area, setArea] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
+  const [note, setNote] = useState('')
   const abortRef = useRef<AbortController | null>(null)
   useEffect(
     () => () => {
@@ -75,22 +77,36 @@ export default function CreativePage() {
     abortRef.current = ctrl
     setRunning(true)
     try {
-      const out = await generateJSON<unknown>(client, {
-        system: SYSTEM_TEACHER,
-        prompt: creativePrompt(filled, settings.ending),
-        temperature: 0.9,
-        maxTokens: 8000,
-        signal: ctrl.signal,
+      // 응답이 길이 제한에 잘리면 원문을 나눠(원문 하나면 개수를 반으로) 다시 요청하고 합칩니다
+      const jobs = filled.map((f, idx) => ({ idx, ...f }))
+      const callGroup = async (group: typeof jobs) => {
+        const out = await generateJSON<unknown>(client, {
+          system: SYSTEM_TEACHER,
+          prompt: creativePrompt(group.map(({ text, count }) => ({ text, count })), settings.ending),
+          temperature: 0.9,
+          maxTokens: creativeTokens(group),
+          signal: ctrl.signal,
+        })
+        const parsed = parseResults(out)
+        const used = new Set<number>()
+        const sameLength = parsed.length === group.length
+        return group.map((g, i) => {
+          let j = parsed.findIndex((p, k) => !used.has(k) && p.original === g.text)
+          if (j < 0 && sameLength && !used.has(i)) j = i
+          if (j >= 0) used.add(j)
+          return { idx: g.idx, variations: j >= 0 ? parsed[j].variations.slice(0, g.count) : [] }
+        })
+      }
+      const pieces = await runSplitting(jobs, callGroup, {
+        split: splitByCount,
+        onSplit: async () => {
+          setNote('응답이 길어 나눠서 다시 요청하는 중…')
+          await sleep(/pro/.test(client.model) ? 20000 : 2500, ctrl.signal)
+        },
       })
-      const parsed = parseResults(out)
-      const used = new Set<number>()
-      const sameLength = parsed.length === filled.length
-      const next: CreativeResult[] = filled.map((f, i) => {
-        let j = parsed.findIndex((p, k) => !used.has(k) && p.original === f.text)
-        if (j < 0 && sameLength && !used.has(i)) j = i
-        if (j >= 0) used.add(j)
-        return { original: f.text, variations: j >= 0 ? parsed[j].variations.slice(0, f.count) : [] }
-      })
+      const next: CreativeResult[] = filled.map((f) => ({ original: f.text, variations: [] }))
+      for (const p of pieces) for (const v of p.variations) if (!next[p.idx].variations.includes(v)) next[p.idx].variations.push(v)
+      next.forEach((r, i) => { r.variations = r.variations.slice(0, filled[i].count) })
       if (next.every((r) => !r.variations.length)) throw new Error('AI 응답에서 문장을 찾지 못했습니다. 다시 시도해 주세요.')
       setResults(next)
       const short = next.filter((r, i) => r.variations.length < filled[i].count).length
@@ -100,6 +116,7 @@ export default function CreativePage() {
       else setError(e instanceof Error ? e.message : String(e))
     } finally {
       setRunning(false)
+      setNote('')
       if (abortRef.current === ctrl) abortRef.current = null
     }
   }
@@ -346,7 +363,7 @@ export default function CreativePage() {
             <Spinner />
             <div className="flex-1 min-w-[220px]">
               <div className="font-bold">문장을 만드는 중…</div>
-              <div className="text-[12px] text-white/60">요청 1회로 {filled.length}개 원문 · {totalWanted}문장을 만듭니다</div>
+              <div className="text-[12px] text-white/60">{note || `${filled.length}개 원문 · ${totalWanted}문장을 만듭니다`}</div>
             </div>
             <button type="button" className="btn btn-sm" onClick={() => abortRef.current?.abort()}>중지</button>
           </>
@@ -354,7 +371,7 @@ export default function CreativePage() {
           <>
             <div className="flex-1 min-w-[220px]">
               <div className="font-bold">생성 준비</div>
-              <div className="text-[12px] text-white/60">원문 {filled.length}개 × 지정 개수 = {totalWanted}문장 · 요청 1회 · 학생 정보는 전송하지 않음</div>
+              <div className="text-[12px] text-white/60">원문 {filled.length}개 × 지정 개수 = {totalWanted}문장 · 응답이 길면 나눠 요청 · 학생 정보는 전송하지 않음</div>
             </div>
             <button type="button" className="btn-accent" disabled={!filled.length} onClick={generate}>변형 문장 {totalWanted}개 생성</button>
           </>
